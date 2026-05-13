@@ -187,13 +187,17 @@ def generate_mask(image_size: tuple[int, int], regions: list[TextRegion], paddin
 
 # ── Step 3: Inpaint Clean Jersey ─────────────────────────────────────────────
 
-def inpaint_clean_jersey(image_url: str, mask_url: str) -> Optional[str]:
+def inpaint_clean_jersey(image_bytes: bytes) -> Optional[str]:
     """
     Use Qwen Image Edit to remove text from the jersey via inpainting.
     Returns the URL of the clean (text-removed) jersey image.
     
-    Uses the DashScope async task API for image editing.
+    Uses the DashScope MultiModalConversation SDK.
     """
+    import tempfile
+    import os
+    from dashscope import MultiModalConversation
+
     prompt = (
         "Remove all text, names, numbers, and lettering from this jersey. "
         "Reconstruct the original jersey fabric pattern, stitching, and texture cleanly. "
@@ -201,72 +205,48 @@ def inpaint_clean_jersey(image_url: str, mask_url: str) -> Optional[str]:
         "The result should look like a blank jersey with no text whatsoever."
     )
 
+    # Save bytes to a temp file so the SDK can upload it
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
+        temp_file.write(image_bytes)
+        temp_file_path = temp_file.name
+
     try:
-        # Use the DashScope REST API directly for image editing
-        # The ImageSynthesis API handles image generation/editing tasks
-        headers = {
-            "Authorization": f"Bearer {settings.QWEN_API_KEY}",
-            "Content-Type": "application/json",
-            "X-DashScope-Async": "enable",
-        }
-
-        payload = {
-            "model": settings.QWEN_IMAGE_EDIT_MODEL,
-            "input": {
-                "prompt": prompt,
-                "base_image_url": image_url,
-                "mask_image_url": mask_url,
-            },
-            "parameters": {
-                "n": 1,
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"image": f"file://{temp_file_path}"},
+                    {"text": prompt}
+                ]
             }
-        }
+        ]
 
-        base_url = settings.DASHSCOPE_BASE_URL
-        submit_url = f"{base_url}/services/aigc/image2image/image-synthesis"
+        logger.info("Submitting inpaint request via DashScope SDK...")
+        response = MultiModalConversation.call(
+            api_key=settings.QWEN_API_KEY,
+            model=settings.QWEN_IMAGE_EDIT_MODEL,
+            messages=messages
+        )
 
-        with httpx.Client(timeout=60) as client:
-            # Submit the async task
-            resp = client.post(submit_url, headers=headers, json=payload)
-            resp.raise_for_status()
-            result = resp.json()
-
-            logger.info(f"Image edit submit response: {result}")
-
-            task_id = result.get("output", {}).get("task_id")
-            if not task_id:
-                logger.error(f"No task_id in response: {result}")
-                return None
-
-            # Poll for task completion
-            status_url = f"{base_url}/tasks/{task_id}"
-            status_headers = {"Authorization": f"Bearer {settings.QWEN_API_KEY}"}
-
-            for attempt in range(60):  # Max 5 minutes
-                time.sleep(5)
-                status_resp = client.get(status_url, headers=status_headers)
-                status_resp.raise_for_status()
-                status_data = status_resp.json()
-
-                task_status = status_data.get("output", {}).get("task_status", "")
-                logger.info(f"Inpaint poll #{attempt}: status={task_status}")
-
-                if task_status == "SUCCEEDED":
-                    results = status_data.get("output", {}).get("results", [])
-                    if results:
-                        return results[0].get("url")
-                    return None
-                elif task_status in ("FAILED", "CANCELED"):
-                    error_msg = status_data.get("output", {}).get("message", "Unknown error")
-                    logger.error(f"Inpaint task failed: {error_msg}")
-                    return None
-
-            logger.error("Inpaint task timed out")
+        if response.status_code == 200:
+            content = response.output.choices[0].message.content
+            # Extract the image URL from the multimodal response
+            for item in content:
+                if isinstance(item, dict) and "image" in item:
+                    logger.info("Inpaint succeeded.")
+                    return item["image"]
+            logger.error(f"No image found in response: {content}")
+            return None
+        else:
+            logger.error(f"Inpaint failed: {response.code} - {response.message}")
             return None
 
     except Exception as e:
         logger.exception(f"Inpaint error: {e}")
         return None
+    finally:
+        if os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
 
 
 # ── Step 4: Extract Text Layers ──────────────────────────────────────────────
@@ -395,7 +375,7 @@ def separate_jersey(
 
         # ── Step 3: Inpaint clean jersey
         update_progress("inpainting", "Removing text via Qwen Image Edit (this takes ~30s)...")
-        clean_url = inpaint_clean_jersey(original_url, mask_url)
+        clean_url = inpaint_clean_jersey(image_bytes)
 
         if clean_url:
             # Download the inpainted image and upload to R2
