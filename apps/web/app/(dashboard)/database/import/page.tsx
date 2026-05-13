@@ -9,8 +9,9 @@ const EXPECTED_COLUMNS = ["Team", "Player Name", "Display Name", "Number", "Type
 function parseCSV(text: string): { headers: string[]; rows: ParsedRow[] } {
   const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
   if (lines.length === 0) return { headers: [], rows: [] };
-  const sep = lines[0].includes("\t") ? "\t" : ",";
-  const headers = lines[0].split(sep).map((h) => h.trim().replace(/^"|"$/g, ""));
+  const firstLine = lines[0]!;
+  const sep = firstLine.includes("\t") ? "\t" : ",";
+  const headers = firstLine.split(sep).map((h) => h.trim().replace(/^"|"$/g, ""));
   const rows = lines.slice(1).map((line) => {
     const vals = line.split(sep).map((v) => v.trim().replace(/^"|"$/g, ""));
     const row: ParsedRow = {};
