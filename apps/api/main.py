@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from config import settings
 from database import engine, Base
 from routers import auth
 from routers import fonts as fonts_router
@@ -17,10 +18,15 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS — allow Next.js frontend
+# CORS — allow Next.js frontend (local + deployed)
+_origins = list({
+    "http://localhost:3000",
+    settings.FRONTEND_URL,
+})
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

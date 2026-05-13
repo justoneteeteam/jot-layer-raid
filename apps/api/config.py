@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     R2_SECRET_ACCESS_KEY: str = ""
     R2_BUCKET_NAME: str = "jot-layer-raid-bucket"
 
+    # Server
+    PORT: int = 8000
+    FRONTEND_URL: str = "http://localhost:3000"  # Railway: set to deployed frontend URL
+
     # Auth
     JWT_SECRET: str = "change-me-in-production"
     JWT_ALGORITHM: str = "HS256"
