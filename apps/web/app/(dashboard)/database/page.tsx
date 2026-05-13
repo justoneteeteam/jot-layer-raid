@@ -63,6 +63,61 @@ export default function DatabasePage() {
       });
   }, [selectedTeam]);
 
+  const handleDeletePlayer = async (playerId: number) => {
+    if (!window.confirm("Are you sure you want to delete this player?")) return;
+    
+    try {
+      const res = await fetch(`${API_BASE}/api/database/players/${playerId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setPlayers((prev) => prev.filter(p => p.id !== playerId));
+      } else {
+        alert("Failed to delete player");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error deleting player");
+    }
+  };
+
+  const handleEditPlayer = async (player: Player) => {
+    const newName = window.prompt("Enter new name:", player.name);
+    if (newName === null) return;
+    
+    const newNumberStr = window.prompt("Enter new number:", player.number.toString());
+    if (newNumberStr === null) return;
+    
+    const newNumber = parseInt(newNumberStr, 10);
+    if (isNaN(newNumber)) {
+      alert("Invalid number");
+      return;
+    }
+    
+    try {
+      const res = await fetch(`${API_BASE}/api/database/players/${player.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          name: newName,
+          number: newNumber
+        })
+      });
+      
+      if (res.ok) {
+        const data = await res.json();
+        setPlayers((prev) => prev.map(p => p.id === player.id ? data.player : p));
+      } else {
+        alert("Failed to update player");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error updating player");
+    }
+  };
+
   return (
     <div style={{ display: "flex", gap: 24, height: "calc(100vh - 120px)" }}>
       {/* Sidebar: Teams */}
@@ -139,8 +194,8 @@ export default function DatabasePage() {
                       </span>
                     </td>
                     <td>
-                      <button className="btn btn-ghost">✏️</button>
-                      <button className="btn btn-ghost">🗑️</button>
+                      <button className="btn btn-ghost" onClick={() => handleEditPlayer(player)}>✏️</button>
+                      <button className="btn btn-ghost" onClick={() => handleDeletePlayer(player.id)}>🗑️</button>
                     </td>
                   </tr>
                 ))}

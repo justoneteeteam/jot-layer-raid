@@ -116,3 +116,50 @@ def list_players(team_id: int, db: Session = Depends(get_db)):
         }
         for p in team.players
     ]
+
+
+class PlayerUpdate(BaseModel):
+    name: str | None = None
+    display_name: str | None = None
+    number: int | None = None
+    type: str | None = None
+    group: str | None = None
+    is_active: bool | None = None
+
+
+@router.put("/players/{player_id}")
+def update_player(player_id: int, payload: PlayerUpdate, db: Session = Depends(get_db)):
+    """Update a specific player."""
+    player = db.query(Player).filter(Player.id == player_id).first()
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+        
+    update_data = payload.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(player, key, value)
+        
+    db.commit()
+    db.refresh(player)
+    
+    return {"status": "ok", "player": {
+        "id": player.id,
+        "name": player.name,
+        "display_name": player.display_name,
+        "number": player.number,
+        "type": player.type,
+        "group": player.group,
+        "is_active": player.is_active,
+    }}
+
+
+@router.delete("/players/{player_id}")
+def delete_player(player_id: int, db: Session = Depends(get_db)):
+    """Delete a specific player."""
+    player = db.query(Player).filter(Player.id == player_id).first()
+    if not player:
+        raise HTTPException(status_code=404, detail="Player not found")
+        
+    db.delete(player)
+    db.commit()
+    
+    return {"status": "ok", "deleted": True}
