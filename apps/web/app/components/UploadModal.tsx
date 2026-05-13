@@ -45,7 +45,7 @@ export default function UploadModal({
         exts.some((ext) => f.name.toLowerCase().endsWith(ext))
       );
       if (valid.length > 0) {
-        onFilesSelected(multiple ? [...files, ...valid] : [valid[0]]);
+        onFilesSelected(multiple ? [...files, ...valid] : [valid[0]!]);
       }
     },
     [accept, files, multiple, onFilesSelected]
@@ -54,7 +54,7 @@ export default function UploadModal({
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = Array.from(e.target.files || []);
     if (selected.length > 0) {
-      onFilesSelected(multiple ? [...files, ...selected] : [selected[0]]);
+      onFilesSelected(multiple ? [...files, ...selected] : [selected[0]!]);
     }
     e.target.value = "";
   };

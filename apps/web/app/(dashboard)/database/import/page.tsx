@@ -26,7 +26,7 @@ function autoMap(headers: string[]): Record<string, string> {
   const lower = headers.map((h) => h.toLowerCase());
   const tryMatch = (target: string, patterns: string[]) => {
     const idx = lower.findIndex((h) => patterns.some((p) => h.includes(p)));
-    if (idx >= 0) map[target] = headers[idx];
+    if (idx >= 0) map[target] = headers[idx]!;
   };
   tryMatch("Team", ["team"]);
   tryMatch("Player Name", ["player", "name", "full_name", "fullname"]);
