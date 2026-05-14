@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from database import get_db
 from models.font import Font
-from services.r2_storage import upload_file_to_r2
+from services.r2_storage import upload_file_to_r2, get_presigned_url
 import uuid
 
 router = APIRouter(prefix="/api/fonts", tags=["Fonts"])

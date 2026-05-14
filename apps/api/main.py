@@ -9,8 +9,44 @@ from routers import database_import
 from routers import stores as stores_router
 from routers import mockups as mockups_router
 
-# Create all tables
+# Create all tables (only creates NEW tables, not columns)
 Base.metadata.create_all(bind=engine)
+
+# Migrate schema — add columns that may be missing on existing tables
+def _run_migrations():
+    """Add columns that create_all won't add to existing tables."""
+    from sqlalchemy import text, inspect
+    
+    inspector = inspect(engine)
+    
+    with engine.connect() as conn:
+        # ── fonts table: add team_id, jersey_type ──
+        if "fonts" in inspector.get_table_names():
+            existing = {c["name"] for c in inspector.get_columns("fonts")}
+            if "team_id" not in existing:
+                conn.execute(text("ALTER TABLE fonts ADD COLUMN team_id INTEGER REFERENCES teams(id)"))
+            if "jersey_type" not in existing:
+                conn.execute(text("ALTER TABLE fonts ADD COLUMN jersey_type VARCHAR"))
+        
+        # ── mockup_templates table: add canvas_json, background_color ──
+        if "mockup_templates" in inspector.get_table_names():
+            existing = {c["name"] for c in inspector.get_columns("mockup_templates")}
+            if "canvas_json" not in existing:
+                conn.execute(text("ALTER TABLE mockup_templates ADD COLUMN canvas_json JSON"))
+            if "background_color" not in existing:
+                conn.execute(text("ALTER TABLE mockup_templates ADD COLUMN background_color VARCHAR DEFAULT '#e5e7eb'"))
+            # Remove old AI separation columns if they exist
+            for old_col in ["blank_image_url", "name_layer_url", "number_layer_url", "text_positions", "separation_status"]:
+                if old_col in existing:
+                    conn.execute(text(f"ALTER TABLE mockup_templates DROP COLUMN IF EXISTS {old_col}"))
+        
+        conn.commit()
+
+try:
+    _run_migrations()
+except Exception as e:
+    import logging
+    logging.getLogger(__name__).warning(f"Migration check: {e}")
 
 app = FastAPI(
     title="JOTLayerRaid API",
