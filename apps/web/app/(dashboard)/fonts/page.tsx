@@ -2,17 +2,23 @@
 
 import { useState, useEffect, useCallback } from "react";
 import UploadModal from "../../components/UploadModal";
+import { Font, Team, fetchTeams, fetchFonts } from "../../lib/api";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface FontEntry {
   id: number;
   name: string;
   category: string;
+  team_id?: number;
+  jersey_type?: string;
   file: File | null;
   objectUrl: string;
   preview: string;
 }
 
 const CATEGORIES = ["NFL", "MLB", "NCAA", "NHL", "Custom"];
+const JERSEY_TYPES = ["Home", "Away", "Alternate"];
 
 export default function FontsPage() {
   /* ── State ── */
@@ -22,11 +28,23 @@ export default function FontsPage() {
   const [uploading, setUploading] = useState(false);
   const [search, setSearch] = useState("");
   const [filterCat, setFilterCat] = useState("All");
-  const [uploadedFonts, setUploadedFonts] = useState<FontEntry[]>([
-    { id: 1, name: "NFL Block Bold", category: "NFL", file: null, objectUrl: "", preview: "SMITH-NJIGBA 11" },
-    { id: 2, name: "Eagles Custom", category: "NFL", file: null, objectUrl: "", preview: "HURTS 1" },
-    { id: 3, name: "MLB Script", category: "MLB", file: null, objectUrl: "", preview: "Ohtani 17" },
-  ]);
+  const [filterTeam, setFilterTeam] = useState<number | "All">("All");
+  
+  const [uploadedFonts, setUploadedFonts] = useState<Font[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Load teams and fonts on mount
+  useEffect(() => {
+    Promise.all([
+      fetchTeams().catch(e => { console.error(e); return []; }),
+      fetchFonts().catch(e => { console.error(e); return []; })
+    ]).then(([teamsData, fontsData]) => {
+      setTeams(teamsData);
+      setUploadedFonts(fontsData);
+      setLoading(false);
+    });
+  }, []);
 
   /* ── Load font faces for preview ── */
   const loadFontPreview = useCallback((file: File): Promise<FontEntry> => {
@@ -42,6 +60,8 @@ export default function FontsPage() {
             id: Date.now() + Math.random(),
             name: fontName,
             category: "NFL",
+            team_id: undefined,
+            jersey_type: undefined,
             file,
             objectUrl: url,
             preview: "SMITH-NJIGBA 11",
@@ -52,6 +72,8 @@ export default function FontsPage() {
             id: Date.now() + Math.random(),
             name: fontName,
             category: "NFL",
+            team_id: undefined,
+            jersey_type: undefined,
             file,
             objectUrl: url,
             preview: "SMITH-NJIGBA 11",
@@ -75,6 +97,18 @@ export default function FontsPage() {
       prev.map((p, i) => (i === idx ? { ...p, category: cat } : p))
     );
   };
+  
+  const updatePreviewTeam = (idx: number, teamIdStr: string) => {
+    setPreviews((prev) =>
+      prev.map((p, i) => (i === idx ? { ...p, team_id: teamIdStr ? parseInt(teamIdStr) : undefined } : p))
+    );
+  };
+  
+  const updatePreviewJersey = (idx: number, jerseyType: string) => {
+    setPreviews((prev) =>
+      prev.map((p, i) => (i === idx ? { ...p, jersey_type: jerseyType || undefined } : p))
+    );
+  };
 
   const updatePreviewText = (idx: number, text: string) => {
     setPreviews((prev) =>
@@ -85,28 +119,61 @@ export default function FontsPage() {
   /* ── Upload ── */
   const handleUpload = async () => {
     setUploading(true);
-    // Simulate upload delay — in production POST to /api/fonts/upload
-    await new Promise((r) => setTimeout(r, 1200));
-    setUploadedFonts((prev) => [
-      ...prev,
-      ...previews.map((p, i) => ({ ...p, id: Date.now() + i })),
-    ]);
-    setFiles([]);
-    setPreviews([]);
-    setUploading(false);
-    setModalOpen(false);
+    
+    try {
+      for (const p of previews) {
+        if (!p.file) continue;
+        const formData = new FormData();
+        formData.append("files", p.file);
+        formData.append("category", p.category);
+        if (p.team_id) formData.append("team_id", p.team_id.toString());
+        if (p.jersey_type) formData.append("jersey_type", p.jersey_type);
+        
+        const res = await fetch(`${API_BASE}/api/fonts/upload`, {
+          method: "POST",
+          body: formData
+        });
+        
+        if (!res.ok) throw new Error(`Failed to upload ${p.name}`);
+      }
+      
+      // Refresh fonts
+      const newFonts = await fetchFonts();
+      setUploadedFonts(newFonts);
+      
+      setFiles([]);
+      setPreviews([]);
+      setModalOpen(false);
+    } catch (err) {
+      console.error(err);
+      alert("Error uploading fonts");
+    } finally {
+      setUploading(false);
+    }
   };
 
   /* ── Delete ── */
-  const handleDelete = (id: number) => {
-    setUploadedFonts((prev) => prev.filter((f) => f.id !== id));
+  const handleDelete = async (id: number) => {
+    if (!window.confirm("Delete this font?")) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/fonts/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setUploadedFonts((prev) => prev.filter((f) => f.id !== id));
+      } else {
+        alert("Failed to delete font");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error deleting font");
+    }
   };
 
   /* ── Filter ── */
   const filtered = uploadedFonts.filter((f) => {
     const matchSearch = f.name.toLowerCase().includes(search.toLowerCase());
     const matchCat = filterCat === "All" || f.category === filterCat;
-    return matchSearch && matchCat;
+    const matchTeam = filterTeam === "All" || f.team_id === filterTeam;
+    return matchSearch && matchCat && matchTeam;
   });
 
   return (
@@ -122,6 +189,19 @@ export default function FontsPage() {
               onChange={(e) => setSearch(e.target.value)}
               style={{ width: 200, height: 36 }}
             />
+            
+            <select
+              className="input"
+              value={filterTeam}
+              onChange={(e) => setFilterTeam(e.target.value === "All" ? "All" : parseInt(e.target.value))}
+              style={{ width: 160, height: 36 }}
+            >
+              <option value="All">All Teams</option>
+              {teams.map((t) => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+            
             <select
               className="input"
               value={filterCat}
@@ -164,14 +244,19 @@ export default function FontsPage() {
               <tr>
                 <th>Font Name</th>
                 <th>Category</th>
+                <th>Team & Jersey</th>
                 <th>Preview</th>
                 <th>Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.length === 0 ? (
+              {loading ? (
                 <tr>
-                  <td colSpan={4}>
+                  <td colSpan={5} style={{ textAlign: "center", padding: 32 }}>Loading fonts...</td>
+                </tr>
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={5}>
                     <div className="empty-state" style={{ padding: 32 }}>
                       <div className="empty-state-icon">🔤</div>
                       <div className="empty-state-title">No fonts found</div>
@@ -181,23 +266,30 @@ export default function FontsPage() {
                 </tr>
               ) : (
                 filtered.map((font) => {
-                  const fontFamily = font.objectUrl
-                    ? font.name
-                    : "monospace";
                   return (
                     <tr key={font.id}>
                       <td style={{ fontWeight: 600 }}>{font.name}</td>
                       <td>
                         <span className="badge badge-info">{font.category}</span>
                       </td>
-                      <td
-                        style={{
-                          fontFamily: fontFamily,
-                          fontSize: 22,
-                          letterSpacing: 1,
-                        }}
-                      >
-                        {font.preview}
+                      <td>
+                        {font.team_name ? (
+                          <div>
+                            <div style={{ fontWeight: 500 }}>{font.team_name}</div>
+                            {font.jersey_type && <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>{font.jersey_type} Jersey</div>}
+                          </div>
+                        ) : (
+                          <span style={{ color: "var(--text-muted)", fontSize: 12 }}>Global</span>
+                        )}
+                      </td>
+                      <td>
+                        <div style={{ display: "flex", alignItems: "center" }}>
+                          {/* Basic way to load font from URL for preview if needed, but standard system fonts or preloaded fonts usually work best. 
+                              For external URLs we'd need a dynamic @font-face injection, or just show text for now. */}
+                          <div style={{ fontSize: 22, letterSpacing: 1, fontFamily: `"${font.name}", monospace` }}>
+                            SMITH-NJIGBA 11
+                          </div>
+                        </div>
                       </td>
                       <td>
                         <button
@@ -234,23 +326,51 @@ export default function FontsPage() {
         {/* Preview slot */}
         <div className="font-preview-grid">
           {previews.map((entry, idx) => (
-            <div key={idx} className="font-preview-card">
-              <div className="font-preview-header">
+            <div key={idx} className="font-preview-card" style={{ padding: 12 }}>
+              <div className="font-preview-header" style={{ marginBottom: 8, display: "flex", flexDirection: "column", gap: 8 }}>
                 <span className="font-preview-name">{entry.name}</span>
-                <select
-                  className="input"
-                  value={entry.category}
-                  onChange={(e) => updatePreviewCategory(idx, e.target.value)}
-                  style={{ width: 100, height: 30, fontSize: 12 }}
-                >
-                  {CATEGORIES.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <select
+                    className="input"
+                    value={entry.category}
+                    onChange={(e) => updatePreviewCategory(idx, e.target.value)}
+                    style={{ flex: 1, height: 30, fontSize: 12 }}
+                  >
+                    {CATEGORIES.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                  
+                  <select
+                    className="input"
+                    value={entry.team_id || ""}
+                    onChange={(e) => updatePreviewTeam(idx, e.target.value)}
+                    style={{ flex: 1, height: 30, fontSize: 12 }}
+                  >
+                    <option value="">No Team (Global)</option>
+                    {teams.map((t) => (
+                      <option key={t.id} value={t.id}>{t.name}</option>
+                    ))}
+                  </select>
+                  
+                  {entry.team_id && (
+                    <select
+                      className="input"
+                      value={entry.jersey_type || ""}
+                      onChange={(e) => updatePreviewJersey(idx, e.target.value)}
+                      style={{ flex: 1, height: 30, fontSize: 12 }}
+                    >
+                      <option value="">Any Jersey</option>
+                      {JERSEY_TYPES.map((jt) => (
+                        <option key={jt} value={jt}>{jt}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
               </div>
               <div
                 className="font-preview-text"
-                style={{ fontFamily: entry.name }}
+                style={{ fontFamily: entry.name, padding: "16px 0", textAlign: "center", border: "1px dashed var(--border-default)", borderRadius: 4, margin: "8px 0" }}
               >
                 {entry.preview}
               </div>
@@ -259,7 +379,7 @@ export default function FontsPage() {
                 placeholder="Preview text…"
                 value={entry.preview}
                 onChange={(e) => updatePreviewText(idx, e.target.value)}
-                style={{ height: 30, fontSize: 12 }}
+                style={{ height: 30, fontSize: 12, width: "100%" }}
               />
             </div>
           ))}

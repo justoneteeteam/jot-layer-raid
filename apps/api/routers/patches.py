@@ -16,7 +16,7 @@ def list_patches(db: Session = Depends(get_db)):
         {
             "id": p.id,
             "name": p.name,
-            "image_url": p.image_url,
+            "image_url": get_presigned_url(p.image_url) if p.image_url else "",
             "width": p.width,
             "height": p.height,
         }

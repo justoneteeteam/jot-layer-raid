@@ -1,26 +1,121 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { Team, Template, Player, Font, Patch, fetchTeams, fetchTemplates, fetchPlayers, fetchFonts, fetchPatches } from "../../lib/api";
+
+const WIZARD_STEPS = [
+  { num: 1, label: "Team & Template" },
+  { num: 2, label: "Players" },
+  { num: 3, label: "Font & Style" },
+  { num: 4, label: "Sizing Mapping" },
+  { num: 5, label: "Variant Quantities" },
+  { num: 6, label: "Review & Run" },
+];
 
 export default function BulkPage() {
   const [showWizard, setShowWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
+  const [loading, setLoading] = useState(true);
+
+  // Data from API
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [allPlayers, setAllPlayers] = useState<Player[]>([]);
+  const [fonts, setFonts] = useState<Font[]>([]);
+  const [patches, setPatches] = useState<Patch[]>([]);
+
+  // Wizard State
+  const [jobName, setJobName] = useState("");
+  const [selectedTeamId, setSelectedTeamId] = useState<number | "">("");
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | "">("");
+  const [selectedPlayerIds, setSelectedPlayerIds] = useState<number[]>([]);
+  
+  const [nameFontId, setNameFontId] = useState<number | "">("");
+  const [numberFontId, setNumberFontId] = useState<number | "">("");
+  const [nameColor, setNameColor] = useState("#FFFFFF");
+  const [numberColor, setNumberColor] = useState("#FFFFFF");
+  const [selectedPatchId, setSelectedPatchId] = useState<number | "">("");
+  
+  const [variants, setVariants] = useState([{ name: "Adult Standard", size: "L", qty: 1 }]);
 
   const mockJobs = [
     { id: 1, name: "Eagles Full Roster 2026", team: "Philadelphia Eagles", template: "Eagles Home Green", status: "completed", total: 53, done: 53, created: "2026-05-08" },
     { id: 2, name: "Cowboys Legends Pack", team: "Dallas Cowboys", template: "Cowboys Away White", status: "running", total: 30, done: 18, created: "2026-05-10" },
-    { id: 3, name: "Ravens Current Roster", team: "Baltimore Ravens", template: "Ravens Alternate Black", status: "queued", total: 45, done: 0, created: "2026-05-10" },
   ];
 
-  const wizardSteps = [
-    { num: 1, label: "Team & Template" },
-    { num: 2, label: "Players" },
-    { num: 3, label: "Font & Style" },
-    { num: 4, label: "Category & SEO" },
-    { num: 5, label: "Target Stores" },
-    { num: 6, label: "Review & Run" },
-    { num: 7, label: "Sheets Export" },
-  ];
+  // Load initial data (Teams, Templates, Patches)
+  useEffect(() => {
+    Promise.all([
+      fetchTeams(),
+      fetchTemplates(),
+      fetchPatches()
+    ]).then(([teamsData, templatesData, patchesData]) => {
+      setTeams(teamsData);
+      setTemplates(templatesData);
+      setPatches(patchesData);
+      setLoading(false);
+    }).catch(err => {
+      console.error(err);
+      setLoading(false);
+    });
+  }, []);
+
+  // When team changes, fetch players and fonts for that team
+  useEffect(() => {
+    if (selectedTeamId) {
+      setAllPlayers([]);
+      setFonts([]);
+      Promise.all([
+        fetchPlayers(Number(selectedTeamId)),
+        fetchFonts(Number(selectedTeamId))
+      ]).then(([playersData, fontsData]) => {
+        setAllPlayers(playersData);
+        // Also fetch global fonts just in case
+        fetchFonts().then(globalFonts => {
+          // Merge avoiding duplicates
+          const combined = [...fontsData];
+          globalFonts.forEach(gf => {
+            if (!combined.find(f => f.id === gf.id)) combined.push(gf);
+          });
+          setFonts(combined);
+        });
+      });
+    }
+  }, [selectedTeamId]);
+
+  const togglePlayer = (id: number) => {
+    setSelectedPlayerIds(prev => 
+      prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]
+    );
+  };
+  
+  const toggleAllPlayers = () => {
+    if (selectedPlayerIds.length === allPlayers.length && allPlayers.length > 0) {
+      setSelectedPlayerIds([]);
+    } else {
+      setSelectedPlayerIds(allPlayers.map(p => p.id));
+    }
+  };
+
+  const handleNext = () => {
+    // Basic validation per step
+    if (wizardStep === 1 && (!selectedTeamId || !selectedTemplateId)) {
+      alert("Please select a team and a template.");
+      return;
+    }
+    if (wizardStep === 2 && selectedPlayerIds.length === 0) {
+      alert("Please select at least one player.");
+      return;
+    }
+    if (wizardStep < WIZARD_STEPS.length) setWizardStep(s => s + 1);
+  };
+
+  const handleStart = () => {
+    alert(`Started job: ${jobName || "Untitled"} with ${selectedPlayerIds.length} players! (Mock)`);
+    setShowWizard(false);
+  };
+
+  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
   return (
     <div>
@@ -29,7 +124,7 @@ export default function BulkPage() {
         <div className="stat-card">
           <div className="stat-icon">📋</div>
           <div className="stat-label">Total Jobs</div>
-          <div className="stat-value">3</div>
+          <div className="stat-value">2</div>
         </div>
         <div className="stat-card">
           <div className="stat-icon">✅</div>
@@ -113,8 +208,8 @@ export default function BulkPage() {
           display: "flex", alignItems: "center", justifyContent: "center",
         }} onClick={() => setShowWizard(false)}>
           <div style={{
-            background: "var(--bg-primary)", borderRadius: 12, width: 720,
-            maxHeight: "85vh", overflow: "hidden", boxShadow: "var(--shadow-lg)",
+            background: "var(--bg-primary)", borderRadius: 12, width: 800,
+            maxHeight: "85vh", minHeight: 600, overflow: "hidden", boxShadow: "var(--shadow-lg)",
             display: "flex", flexDirection: "column",
           }} onClick={e => e.stopPropagation()}>
 
@@ -128,7 +223,7 @@ export default function BulkPage() {
 
             {/* Step Indicator */}
             <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border-default)", display: "flex", gap: 4 }}>
-              {wizardSteps.map(step => (
+              {WIZARD_STEPS.map(step => (
                 <div key={step.num} style={{
                   flex: 1, textAlign: "center", padding: "8px 4px", borderRadius: 6, fontSize: 11, fontWeight: 600,
                   background: wizardStep === step.num ? "var(--accent)" : wizardStep > step.num ? "var(--accent-light)" : "var(--bg-tertiary)",
@@ -142,195 +237,173 @@ export default function BulkPage() {
 
             {/* Step Content */}
             <div style={{ padding: 24, flex: 1, overflowY: "auto" }}>
+              {loading ? (
+                 <div style={{ textAlign: "center", padding: 48 }}>Loading wizard data...</div>
+              ) : (
+                <>
+                  {wizardStep === 1 && (
+                    <div style={{ maxWidth: 600, margin: "0 auto" }}>
+                      <div className="form-group">
+                        <label className="form-label">Job Name (Optional)</label>
+                        <input className="input" placeholder="e.g. Eagles Full Roster 2026" value={jobName} onChange={e => setJobName(e.target.value)} />
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                        <div className="form-group">
+                          <label className="form-label">Select Team</label>
+                          <select className="input" value={selectedTeamId} onChange={e => setSelectedTeamId(e.target.value ? Number(e.target.value) : "")}>
+                            <option value="">-- Choose a Team --</option>
+                            {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Mockup Template</label>
+                          <select className="input" value={selectedTemplateId} onChange={e => setSelectedTemplateId(e.target.value ? Number(e.target.value) : "")}>
+                            <option value="">-- Choose a Template --</option>
+                            {templates.filter(t => !selectedTeamId || t.team_id === selectedTeamId || !t.team_id).map(t => (
+                              <option key={t.id} value={t.id}>{t.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+                      {selectedTemplateId && (
+                        <div style={{ marginTop: 16, padding: 16, border: "1px solid var(--border-default)", borderRadius: 8, textAlign: "center" }}>
+                          <div style={{ fontSize: 48, marginBottom: 8 }}>🎽</div>
+                          <div style={{ fontWeight: 500 }}>{templates.find(t => t.id === selectedTemplateId)?.name}</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
-              {wizardStep === 1 && (
-                <div>
-                  <div className="form-group">
-                    <label className="form-label">Job Name</label>
-                    <input className="input" placeholder="e.g. Eagles Full Roster 2026" />
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                    <div className="form-group">
-                      <label className="form-label">Team</label>
-                      <select className="input">
-                        <option value="">Select team...</option>
-                        <option>Philadelphia Eagles</option>
-                        <option>Dallas Cowboys</option>
-                        <option>Baltimore Ravens</option>
-                        <option>Las Vegas Raiders</option>
-                      </select>
+                  {wizardStep === 2 && (
+                    <div>
+                      <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 16 }}>Select players to include in this bulk run.</p>
+                      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+                        <button className="btn btn-secondary" onClick={toggleAllPlayers}>
+                          {selectedPlayerIds.length === allPlayers.length && allPlayers.length > 0 ? "Deselect All" : "Select All"}
+                        </button>
+                        <span style={{ marginLeft: 16, fontWeight: 500, alignSelf: "center" }}>{selectedPlayerIds.length} Selected</span>
+                      </div>
+                      <div className="table-wrapper">
+                        <table>
+                          <thead><tr><th style={{ width: 40 }}></th><th>Player Name</th><th>#</th><th>Type</th></tr></thead>
+                          <tbody>
+                            {allPlayers.length === 0 ? (
+                              <tr><td colSpan={4} style={{ textAlign: "center", padding: 32 }}>No players found for this team.</td></tr>
+                            ) : (
+                              allPlayers.map((p) => (
+                                <tr key={p.id}>
+                                  <td><input type="checkbox" checked={selectedPlayerIds.includes(p.id)} onChange={() => togglePlayer(p.id)} /></td>
+                                  <td style={{ fontWeight: 500 }}>{p.display_name}</td>
+                                  <td style={{ fontFamily: "monospace" }}>{p.number}</td>
+                                  <td><span className={`badge ${p.type === "Legend" ? "badge-warning" : "badge-info"}`}>{p.type}</span></td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
-                    <div className="form-group">
-                      <label className="form-label">Mockup Template</label>
-                      <select className="input">
-                        <option value="">Select template...</option>
-                        <option>Eagles Home Green</option>
-                        <option>Cowboys Away White</option>
-                        <option>Ravens Alternate Black</option>
-                      </select>
+                  )}
+
+                  {wizardStep === 3 && (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 32 }}>
+                      <div>
+                        <h4 style={{ marginBottom: 16, fontSize: 16, fontWeight: 600 }}>Typography</h4>
+                        <div className="form-group">
+                          <label className="form-label">Name Font</label>
+                          <select className="input" value={nameFontId} onChange={e => setNameFontId(e.target.value ? Number(e.target.value) : "")}>
+                            <option value="">-- Template Default --</option>
+                            {fonts.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                          </select>
+                        </div>
+                        <div className="form-group">
+                          <label className="form-label">Number Font</label>
+                          <select className="input" value={numberFontId} onChange={e => setNumberFontId(e.target.value ? Number(e.target.value) : "")}>
+                            <option value="">-- Template Default --</option>
+                            {fonts.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                          </select>
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+                          <div className="form-group">
+                            <label className="form-label">Name Color</label>
+                            <input className="input" type="color" value={nameColor} onChange={e => setNameColor(e.target.value)} style={{ height: 40, padding: 4 }} />
+                          </div>
+                          <div className="form-group">
+                            <label className="form-label">Number Color</label>
+                            <input className="input" type="color" value={numberColor} onChange={e => setNumberColor(e.target.value)} style={{ height: 40, padding: 4 }} />
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div>
+                        <h4 style={{ marginBottom: 16, fontSize: 16, fontWeight: 600 }}>Patches & Accents</h4>
+                        <div className="form-group">
+                          <label className="form-label">Patch (optional)</label>
+                          <select className="input" value={selectedPatchId} onChange={e => setSelectedPatchId(e.target.value ? Number(e.target.value) : "")}>
+                            <option value="">No patch</option>
+                            {patches.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </select>
+                        </div>
+                        {selectedPatchId && (
+                          <div style={{ padding: 16, border: "1px dashed var(--border-default)", borderRadius: 8, textAlign: "center" }}>
+                            <img src={patches.find(p => p.id === selectedPatchId)?.image_url} alt="Patch" style={{ height: 80, objectFit: "contain" }} onError={(e) => { e.currentTarget.src = "https://placehold.co/80x80?text=Error" }} />
+                          </div>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Variants</label>
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                      {["Men", "Women", "Youth"].map(v => (
-                        <label key={v} style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 16px", border: "1px solid var(--border-default)", borderRadius: 8, cursor: "pointer", fontSize: 14 }}>
-                          <input type="checkbox" defaultChecked={v === "Men"} /> {v}
-                        </label>
+                  )}
+
+                  {wizardStep === 4 && (
+                    <div style={{ maxWidth: 600, margin: "0 auto", textAlign: "center", color: "var(--text-secondary)" }}>
+                      <div style={{ fontSize: 48, marginBottom: 16 }}>📏</div>
+                      <h3 style={{ fontSize: 20, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>Sizing Rules</h3>
+                      <p>Text and numbers will automatically scale to fit the designated bounding box defined in the template. Long names will be squished horizontally to avoid overflow.</p>
+                    </div>
+                  )}
+
+                  {wizardStep === 5 && (
+                    <div style={{ maxWidth: 600, margin: "0 auto" }}>
+                      <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 16 }}>Define the output variants for each player.</p>
+                      {variants.map((v, i) => (
+                        <div key={i} style={{ display: "flex", gap: 12, marginBottom: 12, alignItems: "center" }}>
+                          <input className="input" style={{ flex: 2 }} value={v.name} onChange={(e) => { const newV = [...variants]; newV[i].name = e.target.value; setVariants(newV); }} />
+                          <input className="input" style={{ flex: 1 }} value={v.size} onChange={(e) => { const newV = [...variants]; newV[i].size = e.target.value; setVariants(newV); }} />
+                          <button className="btn btn-ghost" onClick={() => setVariants(variants.filter((_, idx) => idx !== i))}>🗑️</button>
+                        </div>
                       ))}
+                      <button className="btn btn-secondary" style={{ width: "100%", marginTop: 8 }} onClick={() => setVariants([...variants, { name: "New Variant", size: "M", qty: 1 }])}>+ Add Variant</button>
                     </div>
-                  </div>
-                </div>
-              )}
+                  )}
 
-              {wizardStep === 2 && (
-                <div>
-                  <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 16 }}>Select players to include in this bulk run. Players are pulled from the team database.</p>
-                  <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-                    <button className="btn btn-secondary">☑️ Select All (53)</button>
-                    <button className="btn btn-secondary">🔄 Current Only</button>
-                    <button className="btn btn-secondary">⭐ Legends Only</button>
-                  </div>
-                  <div className="table-wrapper">
-                    <table>
-                      <thead><tr><th style={{ width: 40 }}></th><th>Player</th><th>#</th><th>Type</th></tr></thead>
-                      <tbody>
-                        {[{ n: "Jalen Hurts", num: 1, t: "Current" }, { n: "A.J. Brown", num: 11, t: "Current" }, { n: "DeVonta Smith", num: 6, t: "Current" }, { n: "Jason Kelce", num: 62, t: "Legend" }].map((p, i) => (
-                          <tr key={i}>
-                            <td><input type="checkbox" defaultChecked /></td>
-                            <td style={{ fontWeight: 500 }}>{p.n}</td>
-                            <td style={{ fontFamily: "monospace" }}>{p.num}</td>
-                            <td><span className={`badge ${p.t === "Legend" ? "badge-warning" : "badge-info"}`}>{p.t}</span></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-
-              {wizardStep === 3 && (
-                <div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                    <div className="form-group">
-                      <label className="form-label">Name Font</label>
-                      <select className="input">
-                        <option>NFL Block Bold</option>
-                        <option>Eagles Custom</option>
-                      </select>
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Number Font</label>
-                      <select className="input">
-                        <option>NFL Block Bold</option>
-                        <option>Eagles Custom</option>
-                      </select>
-                    </div>
-                  </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-                    <div className="form-group">
-                      <label className="form-label">Name Color</label>
-                      <input className="input" type="color" defaultValue="#FFFFFF" style={{ height: 40, padding: 4 }} />
-                    </div>
-                    <div className="form-group">
-                      <label className="form-label">Number Color</label>
-                      <input className="input" type="color" defaultValue="#FFFFFF" style={{ height: 40, padding: 4 }} />
-                    </div>
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Patch (optional)</label>
-                    <select className="input">
-                      <option value="">No patch</option>
-                      <option>Super Bowl LVII</option>
-                      <option>Captain Patch (C)</option>
-                    </select>
-                  </div>
-                </div>
-              )}
-
-              {wizardStep === 4 && (
-                <div>
-                  <div className="form-group">
-                    <label className="form-label">Product Category Format</label>
-                    <input className="input" value="{domain}-{player-name}-{team}-{number}-jersey" readOnly style={{ background: "var(--bg-secondary)" }} />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Title Template</label>
-                    <input className="input" defaultValue="{player_name} #{number} {team} Jersey - {variant}" />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Description Keywords</label>
-                    <textarea className="input" style={{ height: 80, padding: 10, resize: "vertical" }} defaultValue="NFL, jersey, custom, authentic, football, fan gear" />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Internal Links (future)</label>
-                    <input className="input" placeholder="Configured per store later..." disabled />
-                  </div>
-                </div>
-              )}
-
-              {wizardStep === 5 && (
-                <div>
-                  <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 16 }}>Choose which stores to publish this batch to. Each variant becomes a separate product.</p>
-                  {[
-                    { name: "WaiRaiders Store", platform: "WooCommerce", url: "wairaiders.com" },
-                    { name: "Eagles Gear Shop", platform: "WooCommerce", url: "eaglesgear.shop" },
-                    { name: "JerseyHub SB", platform: "Shopbase", url: "jerseyhub.onshopbase.com" },
-                  ].map((s, i) => (
-                    <label key={i} style={{
-                      display: "flex", alignItems: "center", gap: 12, padding: 16,
-                      border: "1px solid var(--border-default)", borderRadius: 8, marginBottom: 8, cursor: "pointer",
-                    }}>
-                      <input type="checkbox" defaultChecked={i < 2} />
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontWeight: 500 }}>{s.name}</div>
-                        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>{s.platform} · {s.url}</div>
+                  {wizardStep === 6 && (
+                    <div style={{ maxWidth: 600, margin: "0 auto" }}>
+                      <div style={{ padding: 24, backgroundColor: "var(--bg-secondary)", borderRadius: 12, border: "1px solid var(--border-default)" }}>
+                        <h3 style={{ fontSize: 20, fontWeight: 600, marginBottom: 24 }}>Ready to Generate</h3>
+                        
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
+                          <span style={{ color: "var(--text-secondary)" }}>Job Name</span>
+                          <span style={{ fontWeight: 500 }}>{jobName || "Untitled"}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
+                          <span style={{ color: "var(--text-secondary)" }}>Team</span>
+                          <span style={{ fontWeight: 500 }}>{teams.find(t => t.id === selectedTeamId)?.name || "None"}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
+                          <span style={{ color: "var(--text-secondary)" }}>Template</span>
+                          <span style={{ fontWeight: 500 }}>{templates.find(t => t.id === selectedTemplateId)?.name || "None"}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
+                          <span style={{ color: "var(--text-secondary)" }}>Players Selected</span>
+                          <span style={{ fontWeight: 500 }}>{selectedPlayerIds.length}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
+                          <span style={{ color: "var(--text-secondary)" }}>Total Combinations</span>
+                          <span style={{ fontWeight: 600, color: "var(--primary)" }}>{selectedPlayerIds.length * variants.length} Images</span>
+                        </div>
                       </div>
-                      <span className={`badge ${s.platform === "WooCommerce" ? "badge-info" : "badge-warning"}`}>{s.platform}</span>
-                    </label>
-                  ))}
-                </div>
-              )}
-
-              {wizardStep === 6 && (
-                <div>
-                  <h3 style={{ marginBottom: 16 }}>Review Summary</h3>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                    {[
-                      ["Team", "Philadelphia Eagles"],
-                      ["Template", "Eagles Home Green"],
-                      ["Players", "53 selected"],
-                      ["Variants", "Men, Women, Youth"],
-                      ["Total Images", "159"],
-                      ["Total Products", "159"],
-                      ["Stores", "2 selected"],
-                      ["Font", "NFL Block Bold"],
-                    ].map(([k, v]) => (
-                      <div key={k} style={{ padding: "12px 16px", background: "var(--bg-secondary)", borderRadius: 8 }}>
-                        <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", color: "var(--text-muted)", marginBottom: 4 }}>{k}</div>
-                        <div style={{ fontWeight: 500 }}>{v}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ marginTop: 20, padding: 16, background: "#DCFCE7", borderRadius: 8, fontSize: 14, color: "var(--success)" }}>
-                    ✅ Ready to generate! This will create <strong>159 product images</strong> and push them to <strong>2 stores</strong>.
-                  </div>
-                </div>
-              )}
-
-              {wizardStep === 7 && (
-                <div>
-                  <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 16 }}>After publishing, all product data will be logged to Google Sheets for tracking.</p>
-                  <div className="form-group">
-                    <label className="form-label">Google Sheets URL</label>
-                    <input className="input" placeholder="https://docs.google.com/spreadsheets/d/..." />
-                  </div>
-                  <div className="form-group">
-                    <label className="form-label">Sheet Tab Name</label>
-                    <input className="input" defaultValue="Products" />
-                  </div>
-                  <p style={{ fontSize: 13, color: "var(--text-muted)", marginTop: 8 }}>Columns exported: Product Name, URL, SKU, Store, Team, Player, Number, Variant, Published Date</p>
-                </div>
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
@@ -344,9 +417,10 @@ export default function BulkPage() {
               </button>
               <button
                 className="btn btn-primary"
-                onClick={() => wizardStep === 7 ? setShowWizard(false) : setWizardStep(wizardStep + 1)}
+                onClick={() => wizardStep === WIZARD_STEPS.length ? handleStart() : handleNext()}
+                style={wizardStep === WIZARD_STEPS.length ? { backgroundColor: "#2e7d32", color: "#fff", border: "none" } : {}}
               >
-                {wizardStep === 7 ? "🚀 Start Bulk Job" : wizardStep === 6 ? "Next → Sheets" : "Next →"}
+                {wizardStep === WIZARD_STEPS.length ? "🚀 Start Bulk Job" : "Next →"}
               </button>
             </div>
           </div>

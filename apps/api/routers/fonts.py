@@ -1,5 +1,6 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
 from sqlalchemy.orm import Session
+from typing import Optional
 from database import get_db
 from models.font import Font
 from services.r2_storage import upload_file_to_r2
@@ -9,16 +10,29 @@ router = APIRouter(prefix="/api/fonts", tags=["Fonts"])
 
 
 @router.get("")
-def list_fonts(db: Session = Depends(get_db)):
-    """List all fonts."""
-    fonts = db.query(Font).all()
+def list_fonts(
+    team_id: Optional[int] = None,
+    jersey_type: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """List all fonts, optionally filtered by team and jersey type."""
+    query = db.query(Font)
+    if team_id:
+        query = query.filter(Font.team_id == team_id)
+    if jersey_type and jersey_type != "All":
+        query = query.filter(Font.jersey_type == jersey_type)
+        
+    fonts = query.all()
     return [
         {
             "id": f.id,
             "name": f.name,
-            "file_url": f.file_url,
+            "file_url": get_presigned_url(f.file_url) if f.file_url else "",
             "preview_url": f.preview_url,
             "category": f.category,
+            "team_id": f.team_id,
+            "jersey_type": f.jersey_type,
+            "team_name": f.team.name if f.team else None
         }
         for f in fonts
     ]
@@ -27,7 +41,9 @@ def list_fonts(db: Session = Depends(get_db)):
 @router.post("/upload")
 async def upload_fonts(
     files: list[UploadFile] = File(...),
-    category: str = "NFL",
+    category: str = Form("NFL"),
+    team_id: Optional[int] = Form(None),
+    jersey_type: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
     """Upload one or more font files to R2 and save metadata."""
@@ -45,11 +61,23 @@ async def upload_fonts(
         upload_file_to_r2(key, data, content_type=content_type)
 
         name = file.filename.rsplit(".", 1)[0] if file.filename else "Unnamed"
-        font = Font(name=name, file_url=key, category=category)
+        font = Font(
+            name=name, 
+            file_url=key, 
+            category=category,
+            team_id=team_id if team_id and team_id > 0 else None,
+            jersey_type=jersey_type if jersey_type else None
+        )
         db.add(font)
         db.commit()
         db.refresh(font)
-        results.append({"id": font.id, "name": font.name, "file_url": key})
+        results.append({
+            "id": font.id, 
+            "name": font.name, 
+            "file_url": key,
+            "team_id": font.team_id,
+            "jersey_type": font.jersey_type
+        })
 
     return {"uploaded": len(results), "fonts": results}
 

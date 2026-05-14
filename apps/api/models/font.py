@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String
+from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy.orm import relationship
 from database import Base
 
 
@@ -10,3 +11,8 @@ class Font(Base):
     file_url = Column(String, nullable=False)  # R2 URL to .ttf/.otf
     preview_url = Column(String, nullable=True)
     category = Column(String, default="NFL")  # NFL, MLB, NCAA, NHL, Custom
+    
+    team_id = Column(Integer, ForeignKey("teams.id"), nullable=True)
+    jersey_type = Column(String, nullable=True)  # Home, Away, Alternate, None
+    
+    team = relationship("Team", backref="fonts")

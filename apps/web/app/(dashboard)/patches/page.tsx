@@ -2,6 +2,9 @@
 
 import { useState, useEffect } from "react";
 import UploadModal from "../../components/UploadModal";
+import { Patch, fetchPatches } from "../../lib/api";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface PatchEntry {
   id: number;
@@ -18,11 +21,20 @@ export default function PatchesPage() {
   const [previews, setPreviews] = useState<PatchEntry[]>([]);
   const [uploading, setUploading] = useState(false);
   const [search, setSearch] = useState("");
-  const [patches, setPatches] = useState<PatchEntry[]>([
-    { id: 1, name: "Super Bowl LVII", imageUrl: "https://placehold.co/120x120/1a1a2e/e94560?text=SBLVII&font=roboto", width: 120, height: 120, file: null },
-    { id: 2, name: "Captain Patch (C)", imageUrl: "https://placehold.co/120x120/1a1a2e/f5a623?text=C&font=roboto", width: 120, height: 120, file: null },
-    { id: 3, name: "Memorial Ribbon", imageUrl: "https://placehold.co/120x120/1a1a2e/50fa7b?text=Ribbon&font=roboto", width: 120, height: 120, file: null },
-  ]);
+  const [patches, setPatches] = useState<Patch[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchPatches()
+      .then(data => {
+        setPatches(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error(err);
+        setLoading(false);
+      });
+  }, []);
 
   useEffect(() => {
     if (files.length === 0) { setPreviews([]); return; }
@@ -51,12 +63,53 @@ export default function PatchesPage() {
 
   const handleUpload = async () => {
     setUploading(true);
-    await new Promise((r) => setTimeout(r, 1200));
-    setPatches((prev) => [...prev, ...previews.map((p, i) => ({ ...p, id: Date.now() + i }))]);
-    setFiles([]); setPreviews([]); setUploading(false); setModalOpen(false);
+    try {
+      const formData = new FormData();
+      for (const p of previews) {
+        if (p.file) {
+          // You could rename the file here if needed to match `p.name`, 
+          // but the backend takes filename. So we append file.
+          // Note: for multiple files we should ideally send name metadata or upload one by one if names changed.
+          // Since it's a simple dashboard, we upload all and let backend use filename.
+          formData.append("files", p.file, p.name + (p.file.name.match(/\.[^.]+$/)?.[0] || ".png"));
+        }
+      }
+      
+      const res = await fetch(`${API_BASE}/api/patches/upload`, {
+        method: "POST",
+        body: formData
+      });
+      
+      if (!res.ok) throw new Error("Failed to upload patches");
+      
+      const newPatches = await fetchPatches();
+      setPatches(newPatches);
+      
+      setFiles([]); 
+      setPreviews([]); 
+      setModalOpen(false);
+    } catch (err) {
+      console.error(err);
+      alert("Error uploading patches");
+    } finally {
+      setUploading(false);
+    }
   };
 
-  const handleDelete = (id: number) => setPatches((prev) => prev.filter((p) => p.id !== id));
+  const handleDelete = async (id: number) => {
+    if (!window.confirm("Delete this patch?")) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/patches/${id}`, { method: "DELETE" });
+      if (res.ok) {
+        setPatches((prev) => prev.filter((p) => p.id !== id));
+      } else {
+        alert("Failed to delete patch");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error deleting patch");
+    }
+  };
 
   const filtered = patches.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
 
@@ -74,7 +127,9 @@ export default function PatchesPage() {
           <span className="upload-stat-chip">🏷️ Total Patches: <strong>{patches.length}</strong></span>
         </div>
         <div className="patch-grid" style={{ marginTop: 16 }}>
-          {filtered.length === 0 ? (
+          {loading ? (
+            <div style={{ gridColumn: "1 / -1", padding: 48, textAlign: "center" }}>Loading patches...</div>
+          ) : filtered.length === 0 ? (
             <div className="empty-state" style={{ gridColumn: "1 / -1", padding: 48 }}>
               <div className="empty-state-icon">🏷️</div>
               <div className="empty-state-title">No patches found</div>
@@ -83,10 +138,10 @@ export default function PatchesPage() {
           ) : (
             filtered.map((patch) => (
               <div key={patch.id} className="patch-card">
-                <div className="patch-card-image"><img src={patch.imageUrl} alt={patch.name} /></div>
+                <div className="patch-card-image"><img src={patch.image_url} alt={patch.name} onError={(e) => { e.currentTarget.src = "https://placehold.co/120x120?text=Error" }} /></div>
                 <div className="patch-card-info">
                   <div className="patch-card-name">{patch.name}</div>
-                  {patch.width > 0 && <div className="patch-card-dims">{patch.width} × {patch.height}px</div>}
+                  {patch.width && patch.height && <div className="patch-card-dims">{patch.width} × {patch.height}px</div>}
                 </div>
                 <div className="patch-card-actions">
                   <button className="btn btn-ghost" onClick={() => handleDelete(patch.id)} title="Delete patch">🗑️</button>
