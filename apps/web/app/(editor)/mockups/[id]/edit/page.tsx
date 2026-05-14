@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import * as fabric from "fabric";
-import { Font, Patch, Template, fetchFonts, fetchPatches, fetchTemplate, saveTemplate, uploadBackground } from "../../../../../lib/api";
+import { Font, Patch, Template, fetchFonts, fetchPatches, fetchTemplate, saveTemplate, uploadBackground } from "../../../../lib/api";
 
 type ActiveTab = "text" | "images" | "patches" | "layers";
 
