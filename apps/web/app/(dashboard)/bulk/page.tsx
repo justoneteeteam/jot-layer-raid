@@ -366,8 +366,8 @@ export default function BulkPage() {
                       <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 16 }}>Define the output variants for each player.</p>
                       {variants.map((v, i) => (
                         <div key={i} style={{ display: "flex", gap: 12, marginBottom: 12, alignItems: "center" }}>
-                          <input className="input" style={{ flex: 2 }} value={v.name} onChange={(e) => { const newV = [...variants]; newV[i].name = e.target.value; setVariants(newV); }} />
-                          <input className="input" style={{ flex: 1 }} value={v.size} onChange={(e) => { const newV = [...variants]; newV[i].size = e.target.value; setVariants(newV); }} />
+                          <input className="input" style={{ flex: 2 }} value={v.name} onChange={(e) => { const newV = [...variants]; if (newV[i]) newV[i].name = e.target.value; setVariants(newV); }} />
+                          <input className="input" style={{ flex: 1 }} value={v.size} onChange={(e) => { const newV = [...variants]; if (newV[i]) newV[i].size = e.target.value; setVariants(newV); }} />
                           <button className="btn btn-ghost" onClick={() => setVariants(variants.filter((_, idx) => idx !== i))}>🗑️</button>
                         </div>
                       ))}
