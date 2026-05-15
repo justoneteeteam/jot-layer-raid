@@ -22,4 +22,4 @@ EXPOSE ${PORT}
 
 # Run migration fix before starting the app, then start uvicorn
 # The migration script is idempotent — safe to run on every deploy
-CMD python fix_migration.py || echo "Migration skipped (may already be applied)" && uvicorn main:app --host 0.0.0.0 --port ${PORT}
+CMD sh -c "python fix_migration.py || true; uvicorn main:app --host 0.0.0.0 --port ${PORT}"
