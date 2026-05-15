@@ -12,41 +12,46 @@ from routers import mockups as mockups_router
 # Create all tables (only creates NEW tables, not columns)
 Base.metadata.create_all(bind=engine)
 
-# Migrate schema — add columns that may be missing on existing tables
+# Migrate schema — add columns that create_all won't add to existing tables
 def _run_migrations():
     """Add columns that create_all won't add to existing tables."""
     from sqlalchemy import text, inspect
-    
+    import logging
+
+    logger = logging.getLogger(__name__)
     inspector = inspect(engine)
-    
-    with engine.connect() as conn:
+    table_names = inspector.get_table_names()
+
+    with engine.begin() as conn:  # auto-commits on success, rolls back on error
         # ── fonts table: add team_id, jersey_type ──
-        if "fonts" in inspector.get_table_names():
+        if "fonts" in table_names:
             existing = {c["name"] for c in inspector.get_columns("fonts")}
             if "team_id" not in existing:
                 conn.execute(text("ALTER TABLE fonts ADD COLUMN team_id INTEGER REFERENCES teams(id)"))
+                logger.info("Added fonts.team_id")
             if "jersey_type" not in existing:
                 conn.execute(text("ALTER TABLE fonts ADD COLUMN jersey_type VARCHAR"))
-        
+                logger.info("Added fonts.jersey_type")
+
         # ── mockup_templates table: add canvas_json, background_color ──
-        if "mockup_templates" in inspector.get_table_names():
+        if "mockup_templates" in table_names:
             existing = {c["name"] for c in inspector.get_columns("mockup_templates")}
             if "canvas_json" not in existing:
                 conn.execute(text("ALTER TABLE mockup_templates ADD COLUMN canvas_json JSON"))
+                logger.info("Added mockup_templates.canvas_json")
             if "background_color" not in existing:
                 conn.execute(text("ALTER TABLE mockup_templates ADD COLUMN background_color VARCHAR DEFAULT '#e5e7eb'"))
+                logger.info("Added mockup_templates.background_color")
             # Remove old AI separation columns if they exist
             for old_col in ["blank_image_url", "name_layer_url", "number_layer_url", "text_positions", "separation_status"]:
                 if old_col in existing:
-                    conn.execute(text(f"ALTER TABLE mockup_templates DROP COLUMN IF EXISTS {old_col}"))
-        
-        conn.commit()
+                    conn.execute(text(f"ALTER TABLE mockup_templates DROP COLUMN {old_col}"))
+                    logger.info(f"Dropped mockup_templates.{old_col}")
+        else:
+            logger.info("mockup_templates table not found — will be created by create_all")
+            logger.info(f"Tables found: {table_names}")
 
-try:
-    _run_migrations()
-except Exception as e:
-    import logging
-    logging.getLogger(__name__).warning(f"Migration check: {e}")
+_run_migrations()
 
 app = FastAPI(
     title="JOTLayerRaid API",
