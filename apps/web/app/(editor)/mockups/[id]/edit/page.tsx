@@ -169,7 +169,7 @@ export default function EditorPage() {
   useEffect(() => {
     fonts.forEach(f => {
       if (f.file_url && f.name) {
-        const fontFace = new FontFace(f.name, `url(${f.file_url})`);
+        const fontFace = new FontFace(f.name, `url('${f.file_url}')`, { display: 'swap' });
         fontFace.load().then(loaded => document.fonts.add(loaded)).catch(e => console.error(e));
       }
     });
@@ -180,7 +180,7 @@ export default function EditorPage() {
     const fc = fcRef.current;
     if (!fc) return;
     
-    const defaultFont = fonts.length > 0 ? fonts[0].name : textProps.fontFamily;
+    const defaultFont = fonts.length > 0 ? fonts[0]!.name : textProps.fontFamily;
     
     const t = new fabric.Textbox(preset === "name" ? "PLAYER NAME" : "00", {
       left: 400, top: preset === "name" ? 300 : 500, originX: "center", originY: "center",
