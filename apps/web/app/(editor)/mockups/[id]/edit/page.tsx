@@ -305,7 +305,13 @@ export default function EditorPage() {
     
     setSaving(true);
     try {
-      const json = fc.toJSON(["_layerLabel"]);
+      const json = fc.toJSON();
+      // Preserve _layerLabel custom properties in JSON
+      fc.getObjects().forEach((obj, i) => {
+        if ((obj as any)._layerLabel && json.objects[i]) {
+          json.objects[i]._layerLabel = (obj as any)._layerLabel;
+        }
+      });
       await saveTemplate(template.id, {
         canvas_json: json,
         font_config: {
