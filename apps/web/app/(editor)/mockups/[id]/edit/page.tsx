@@ -106,6 +106,40 @@ export default function EditorPage() {
     fcRef.current = fc;
 
     // Load saved state or default background
+    const loadFallbackBackground = async () => {
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      try {
+        const res = await fetch(`${API_BASE}/api/mockups/templates/${template.id}/layers`);
+        const data = await res.json();
+        if (data.layers?.original) {
+          // Append cache-busting parameter to prevent CORS caching conflicts
+          const bgUrl = `${data.layers.original}${data.layers.original.includes('?') ? '&' : '?'}t=${Date.now()}`;
+          const img = await fabric.FabricImage.fromURL(bgUrl, { crossOrigin: "anonymous" });
+          const scale = Math.min(800 / (img.width || 800), 1000 / (img.height || 1000));
+          img.scaleX = scale;
+          img.scaleY = scale;
+          img.set({ 
+            originX: "center", 
+            originY: "center", 
+            left: 400, 
+            top: 500,
+            selectable: true,
+            hasControls: true,
+            lockUniScaling: false,
+          });
+          (img as any)._layerLabel = "Jersey Background";
+          (img as any)._isJerseyBackground = true;
+
+          fc.add(img);
+          fc.sendObjectToBack(img);
+          fc.renderAll();
+          refreshLayers();
+        }
+      } catch (e) {
+        console.error("Error loading fallback background:", e);
+      }
+    };
+
     const initCanvas = async () => {
       if (template.canvas_json) {
         let freshJson = { ...template.canvas_json };
@@ -118,14 +152,14 @@ export default function EditorPage() {
           const data = await res.json();
           if (data.layers?.original) {
             if (freshJson.backgroundImage) {
-              freshJson.backgroundImage.src = data.layers.original;
+              freshJson.backgroundImage.src = `${data.layers.original}${data.layers.original.includes('?') ? '&' : '?'}t=${Date.now()}`;
             }
             
             // Also scan standard objects array in JSON to update the background image source
             if (Array.isArray(freshJson.objects)) {
               freshJson.objects.forEach((obj: any) => {
                 if (obj._isJerseyBackground || obj._layerLabel === "Jersey Background") {
-                  obj.src = data.layers.original;
+                  obj.src = `${data.layers.original}${data.layers.original.includes('?') ? '&' : '?'}t=${Date.now()}`;
                 }
               });
             }
@@ -134,67 +168,46 @@ export default function EditorPage() {
           console.error("Error refreshing background URL in canvas JSON:", e);
         }
         
-        await fc.loadFromJSON(freshJson);
-
-        // Post-processing: If loaded as legacy fc.backgroundImage, convert it to a standard bottom layer object
-        if (fc.backgroundImage) {
-          const bgImg = fc.backgroundImage;
-          bgImg.set({
-            selectable: true,
-            hasControls: true,
-            lockUniScaling: false,
-          });
-          (bgImg as any)._layerLabel = "Jersey Background";
-          (bgImg as any)._isJerseyBackground = true;
-
-          fc.backgroundImage = undefined;
-          fc.add(bgImg);
-          fc.sendObjectToBack(bgImg);
-        }
-
-        // Post-processing: Ensure loaded standard background objects have correct select and control properties
-        fc.getObjects().forEach(obj => {
-          if ((obj as any)._isJerseyBackground || (obj as any)._layerLabel === "Jersey Background") {
-            obj.set({
-              selectable: true,
-              hasControls: true,
-              lockUniScaling: false,
-            });
-            (obj as any)._isJerseyBackground = true;
-            (obj as any)._layerLabel = "Jersey Background";
-          }
-        });
-
-        fc.renderAll();
-        refreshLayers();
-      } else if (template.original_image_url) {
-        // Fetch original image and add as standard bottom layer object
-        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
         try {
-          const res = await fetch(`${API_BASE}/api/mockups/templates/${template.id}/layers`);
-          const data = await res.json();
-          if (data.layers?.original) {
-            const img = await fabric.FabricImage.fromURL(data.layers.original, { crossOrigin: "anonymous" });
-            const scale = Math.min(800 / (img.width || 800), 1000 / (img.height || 1000));
-            img.scaleX = scale;
-            img.scaleY = scale;
-            img.set({ 
-              originX: "center", 
-              originY: "center", 
-              left: 400, 
-              top: 500,
+          await fc.loadFromJSON(freshJson);
+
+          // Post-processing: If loaded as legacy fc.backgroundImage, convert it to a standard bottom layer object
+          if (fc.backgroundImage) {
+            const bgImg = fc.backgroundImage;
+            bgImg.set({
               selectable: true,
               hasControls: true,
               lockUniScaling: false,
             });
-            (img as any)._layerLabel = "Jersey Background";
-            (img as any)._isJerseyBackground = true;
+            (bgImg as any)._layerLabel = "Jersey Background";
+            (bgImg as any)._isJerseyBackground = true;
 
-            fc.add(img);
-            fc.sendObjectToBack(img);
-            fc.renderAll();
+            fc.backgroundImage = undefined;
+            fc.add(bgImg);
+            fc.sendObjectToBack(bgImg);
           }
-        } catch (e) { console.error("Error loading background", e); }
+
+          // Post-processing: Ensure loaded standard background objects have correct select and control properties
+          fc.getObjects().forEach(obj => {
+            if ((obj as any)._isJerseyBackground || (obj as any)._layerLabel === "Jersey Background") {
+              obj.set({
+                selectable: true,
+                hasControls: true,
+                lockUniScaling: false,
+              });
+              (obj as any)._isJerseyBackground = true;
+              (obj as any)._layerLabel = "Jersey Background";
+            }
+          });
+
+          fc.renderAll();
+          refreshLayers();
+        } catch (err) {
+          console.error("Failed to load canvas from JSON, trying fallback background load:", err);
+          await loadFallbackBackground();
+        }
+      } else if (template.original_image_url) {
+        await loadFallbackBackground();
       }
     };
     
@@ -380,7 +393,9 @@ export default function EditorPage() {
         const existingBg = fc.getObjects().find(o => (o as any)._isJerseyBackground);
         if (existingBg) fc.remove(existingBg);
 
-        const img = await fabric.FabricImage.fromURL(data.layers.original, { crossOrigin: "anonymous" });
+        // Append cache-busting parameter to prevent CORS caching conflicts
+        const bgUrl = `${data.layers.original}${data.layers.original.includes('?') ? '&' : '?'}t=${Date.now()}`;
+        const img = await fabric.FabricImage.fromURL(bgUrl, { crossOrigin: "anonymous" });
         const scale = Math.min(800 / (img.width || 800), 1000 / (img.height || 1000));
         img.scaleX = scale;
         img.scaleY = scale;
