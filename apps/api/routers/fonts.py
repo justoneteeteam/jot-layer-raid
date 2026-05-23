@@ -27,7 +27,11 @@ def list_fonts(
         {
             "id": f.id,
             "name": f.name,
-            "file_url": get_presigned_url(f.file_url) if f.file_url else "",
+            "file_url": (
+                f"{settings.R2_PUBLIC_URL.rstrip('/')}/{f.file_url}"
+                if settings.R2_PUBLIC_URL and f.file_url
+                else get_presigned_url(f.file_url) if f.file_url else ""
+            ),
             "preview_url": f.preview_url,
             "category": f.category,
             "team_id": f.team_id,

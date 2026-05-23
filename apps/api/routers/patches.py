@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models.patch import Patch
 from services.r2_storage import upload_file_to_r2, get_presigned_url
+from config import settings
 import uuid
 
 router = APIRouter(prefix="/api/patches", tags=["Patches"])
@@ -16,7 +17,11 @@ def list_patches(db: Session = Depends(get_db)):
         {
             "id": p.id,
             "name": p.name,
-            "image_url": get_presigned_url(p.image_url) if p.image_url else "",
+            "image_url": (
+                f"{settings.R2_PUBLIC_URL.rstrip('/')}/{p.image_url}"
+                if settings.R2_PUBLIC_URL and p.image_url
+                else get_presigned_url(p.image_url) if p.image_url else ""
+            ),
             "width": p.width,
             "height": p.height,
         }

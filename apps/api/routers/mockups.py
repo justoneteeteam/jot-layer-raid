@@ -139,14 +139,18 @@ def delete_template(template_id: int, db: Session = Depends(get_db)):
 
 @router.get("/templates/{template_id}/layers")
 def get_template_layers(template_id: int, db: Session = Depends(get_db)):
-    """Get presigned URLs for template background."""
+    """Get presigned or public CDN URLs for template background."""
     template = db.query(MockupTemplate).filter(MockupTemplate.id == template_id).first()
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
 
     layers = {}
     if template.original_image_url:
-        layers["original"] = get_presigned_url(template.original_image_url)
+        layers["original"] = (
+            f"{settings.R2_PUBLIC_URL.rstrip('/')}/{template.original_image_url}"
+            if settings.R2_PUBLIC_URL
+            else get_presigned_url(template.original_image_url)
+        )
 
     return {
         "template_id": template_id,
