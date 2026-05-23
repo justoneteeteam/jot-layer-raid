@@ -20,10 +20,9 @@ const WIZARD_STEPS = [
   { num: 1, label: "Team & Template" },
   { num: 2, label: "Players" },
   { num: 3, label: "Font & Style" },
-  { num: 4, label: "Sizing Mapping" },
-  { num: 5, label: "Variant Selection" },
-  { num: 6, label: "Store Mapping" },
-  { num: 7, label: "Review & Run" },
+  { num: 4, label: "Variant Selection" },
+  { num: 5, label: "Store & SEO" },
+  { num: 6, label: "Review & Run" },
 ];
 
 const MEN_SIZES = ["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL", "Custom Size"];
@@ -63,8 +62,20 @@ export default function BulkPage() {
   const [customWomenSize, setCustomWomenSize] = useState("");
   const [customYouthSize, setCustomYouthSize] = useState("");
 
-  // Store selection state
+  // Store & SEO selection state
   const [selectedStoreId, setSelectedStoreId] = useState<number | "">("");
+  const [seoTitlePattern, setSeoTitlePattern] = useState("{player_name} - {team_name} {template_name} Jersey");
+  const [seoDescriptionHtml, setSeoDescriptionHtml] = useState(
+`<p>Gear up with the official <strong>{player_name}</strong> jersey! Custom crafted featuring high-quality fabric, athletic font styling, and team graphics.</p>
+<ul>
+  <li><strong>Player:</strong> {player_name} (#{player_number})</li>
+  <li><strong>Team:</strong> {team_name}</li>
+  <li><strong>Style:</strong> {template_name}</li>
+  <li><strong>Care:</strong> Machine wash cold, tumble dry low</li>
+</ul>`
+  );
+  const [seoCategory, setSeoCategory] = useState("Jerseys");
+  const [seoTags, setSeoTags] = useState("Jersey, {team_name}, {player_name}");
 
   const mockJobs = [
     { id: 1, name: "Eagles Full Roster 2026", team: "Philadelphia Eagles", template: "Eagles Home Green", status: "completed", total: 53, done: 53, created: "2026-05-08" },
@@ -143,14 +154,14 @@ export default function BulkPage() {
       alert("Please select at least one player.");
       return;
     }
-    if (wizardStep === 5) {
+    if (wizardStep === 4) {
       const totalChecked = selectedMenSizes.length + selectedWomenSizes.length + selectedYouthSizes.length;
       if (totalChecked === 0) {
         alert("Please select at least one size variant.");
         return;
       }
     }
-    if (wizardStep === 6 && !selectedStoreId) {
+    if (wizardStep === 5 && !selectedStoreId) {
       alert("Please select a store to map the products.");
       return;
     }
@@ -159,7 +170,7 @@ export default function BulkPage() {
 
   const handleStart = () => {
     const selectedStore = stores.find(s => s.id === selectedStoreId);
-    alert(`🚀 Started job: ${jobName || "Untitled"} with ${selectedPlayerIds.length} players! Automatically pushing mockup products to connected store: ${selectedStore?.name || "Unknown Store"}!`);
+    alert(`🚀 Started bulk generation job "${jobName || "Untitled"}" for ${selectedPlayerIds.length} players!\n\nStore Connection: ${selectedStore?.name || "Unknown"} (${selectedStore?.platform.toUpperCase()})\nTitle Pattern: ${seoTitlePattern}\nCategory: ${seoCategory}\nTags: ${seoTags}\n\nProducts and mockups will automatically generate and push to your store storefront!`);
     setShowWizard(false);
   };
 
@@ -429,14 +440,6 @@ export default function BulkPage() {
                   )}
 
                   {wizardStep === 4 && (
-                    <div style={{ maxWidth: 600, margin: "0 auto", textAlign: "center", color: "var(--text-secondary)" }}>
-                      <div style={{ fontSize: 48, marginBottom: 16 }}>📏</div>
-                      <h3 style={{ fontSize: 20, fontWeight: 600, color: "var(--text-primary)", marginBottom: 8 }}>Sizing Rules</h3>
-                      <p>Text and numbers will automatically scale to fit the designated bounding box defined in the template. Long names will be squished horizontally to avoid overflow.</p>
-                    </div>
-                  )}
-
-                  {wizardStep === 5 && (
                     <div>
                       <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 20 }}>
                         Select the output sizes to generate variants for each player (multi-select checkboxes).
@@ -551,65 +554,146 @@ export default function BulkPage() {
                     </div>
                   )}
 
-                  {wizardStep === 6 && (
-                    <div style={{ maxWidth: 600, margin: "0 auto" }}>
-                      <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 20 }}>
-                        Select the store connection to push the generated jersey mockup products to.
-                      </p>
-                      
-                      {stores.length === 0 ? (
-                        <div style={{ padding: 32, border: "1px dashed var(--border-default)", borderRadius: 12, textAlign: "center" }}>
-                          <div style={{ fontSize: 40, marginBottom: 12 }}>🏪</div>
-                          <h4 style={{ fontWeight: 600, marginBottom: 6 }}>No connected stores found</h4>
-                          <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 16 }}>
-                            Please connect a WooCommerce or ShopBase store in settings first.
-                          </p>
-                          <a href="/settings" className="btn btn-secondary" style={{ padding: "6px 12px", fontSize: 13 }}>
-                            ⚙️ Go to Store Settings
-                          </a>
-                        </div>
-                      ) : (
-                        <div className="form-group">
-                          <label className="form-label" style={{ fontWeight: 600 }}>Select Active Store Mapping</label>
-                          <select 
-                            className="input" 
-                            value={selectedStoreId} 
-                            onChange={e => setSelectedStoreId(e.target.value ? Number(e.target.value) : "")}
-                          >
-                            <option value="">-- Choose a Connected Store --</option>
-                            {stores.map(s => (
-                              <option key={s.id} value={s.id}>
-                                {s.name} ({s.platform.toUpperCase()}) - {s.url}
-                              </option>
-                            ))}
-                          </select>
-                          
-                          {selectedStoreId && (
-                            <div style={{ 
-                              marginTop: 20, padding: 16, borderRadius: 8, 
-                              border: "1px solid var(--border-default)", backgroundColor: "var(--bg-secondary)",
-                              display: "flex", alignItems: "center", gap: 16
-                            }}>
-                              <div style={{ fontSize: 32 }}>🏪</div>
-                              <div>
-                                <div style={{ fontWeight: 600 }}>
-                                  {stores.find(s => s.id === selectedStoreId)?.name}
-                                </div>
-                                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-                                  Platform: <span className="badge badge-info" style={{ textTransform: "uppercase" }}>{stores.find(s => s.id === selectedStoreId)?.platform}</span>
-                                </div>
-                                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
-                                  Store URL: <a href={stores.find(s => s.id === selectedStoreId)?.url} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>{stores.find(s => s.id === selectedStoreId)?.url}</a>
+                  {wizardStep === 5 && (
+                    <div style={{ maxWidth: 800, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
+                      <div>
+                        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>🏪 Store Connection</h3>
+                        <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 16 }}>
+                          Select the store connection to push the generated jersey mockup products to.
+                        </p>
+                        
+                        {stores.length === 0 ? (
+                          <div style={{ padding: 24, border: "1px dashed var(--border-default)", borderRadius: 12, textAlign: "center" }}>
+                            <div style={{ fontSize: 32, marginBottom: 12 }}>🏪</div>
+                            <h4 style={{ fontWeight: 600, marginBottom: 6 }}>No connected stores found</h4>
+                            <p style={{ color: "var(--text-secondary)", fontSize: 12, marginBottom: 16 }}>
+                              Please connect a WooCommerce or ShopBase store in settings first.
+                            </p>
+                            <a href="/settings" className="btn btn-secondary" style={{ padding: "6px 12px", fontSize: 13 }}>
+                              ⚙️ Go to Store Settings
+                            </a>
+                          </div>
+                        ) : (
+                          <div className="form-group">
+                            <select 
+                              className="input" 
+                              value={selectedStoreId} 
+                              onChange={e => setSelectedStoreId(e.target.value ? Number(e.target.value) : "")}
+                            >
+                              <option value="">-- Choose a Connected Store --</option>
+                              {stores.map(s => (
+                                <option key={s.id} value={s.id}>
+                                  {s.name} ({s.platform.toUpperCase()}) - {s.url}
+                                </option>
+                              ))}
+                            </select>
+                            
+                            {selectedStoreId && (
+                              <div style={{ 
+                                marginTop: 12, padding: 12, borderRadius: 8, 
+                                border: "1px solid var(--border-default)", backgroundColor: "var(--bg-secondary)",
+                                display: "flex", alignItems: "center", gap: 12
+                              }}>
+                                <div style={{ fontSize: 24 }}>🏪</div>
+                                <div>
+                                  <div style={{ fontWeight: 600, fontSize: 13 }}>
+                                    {stores.find(s => s.id === selectedStoreId)?.name}
+                                  </div>
+                                  <div style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 2 }}>
+                                    Platform: <span className="badge badge-info" style={{ textTransform: "uppercase", fontSize: 9 }}>{stores.find(s => s.id === selectedStoreId)?.platform}</span>
+                                    <span style={{ margin: "0 8px" }}>|</span>
+                                    URL: <a href={stores.find(s => s.id === selectedStoreId)?.url} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>{stores.find(s => s.id === selectedStoreId)?.url}</a>
+                                  </div>
                                 </div>
                               </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {selectedStoreId && (
+                        <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: 24 }}>
+                          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>🌐 SEO & E-commerce Listing Settings</h3>
+                          <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 20 }}>
+                            Configure the titles, descriptions, categories, and tags to push to your storefront. Use dynamic tags to substitute player-specific metadata.
+                          </p>
+
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                            <div className="form-group">
+                              <label className="form-label" style={{ fontWeight: 600, fontSize: 13 }}>Product Title Pattern</label>
+                              <input 
+                                className="input" 
+                                value={seoTitlePattern} 
+                                onChange={e => setSeoTitlePattern(e.target.value)} 
+                                placeholder="e.g. {player_name} Jersey"
+                              />
+                              <span style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, display: "block" }}>
+                                Example: <em>John Doe - Eagles Home Green Jersey</em>
+                              </span>
                             </div>
-                          )}
+                            
+                            <div className="form-group" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                              <div>
+                                <label className="form-label" style={{ fontWeight: 600, fontSize: 13 }}>Product Category</label>
+                                <input 
+                                  className="input" 
+                                  value={seoCategory} 
+                                  onChange={e => setSeoCategory(e.target.value)} 
+                                  placeholder="e.g. Jerseys, NFL Apparel"
+                                />
+                              </div>
+                              <div>
+                                <label className="form-label" style={{ fontWeight: 600, fontSize: 13 }}>Product Tags</label>
+                                  <input 
+                                  className="input" 
+                                  value={seoTags} 
+                                  onChange={e => setSeoTags(e.target.value)} 
+                                  placeholder="e.g. jerseys, NFL, fanwear"
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="form-group">
+                            <label className="form-label" style={{ fontWeight: 600, fontSize: 13 }}>
+                              Description HTML Setup
+                            </label>
+                            
+                            {/* Variable chips helper */}
+                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8, alignItems: "center" }}>
+                              <span style={{ fontSize: 11, color: "var(--text-secondary)", marginRight: 4 }}>Available placeholders (click to insert):</span>
+                              {["{player_name}", "{player_number}", "{team_name}", "{template_name}"].map(token => (
+                                <button 
+                                  key={token}
+                                  type="button"
+                                  className="badge badge-info"
+                                  style={{ border: "none", cursor: "pointer", padding: "2px 6px", fontSize: 10, textTransform: "none" }}
+                                  onClick={() => {
+                                    setSeoDescriptionHtml(prev => prev + " " + token);
+                                  }}
+                                >
+                                  {token}
+                                </button>
+                              ))}
+                            </div>
+
+                            <textarea 
+                              className="input" 
+                              style={{ 
+                                height: 160, fontFamily: "Consolas, Monaco, monospace", fontSize: 12, lineHeight: "1.5",
+                                backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", padding: "12px", borderRadius: 8
+                              }}
+                              value={seoDescriptionHtml} 
+                              onChange={e => setSeoDescriptionHtml(e.target.value)}
+                              placeholder="Write standard HTML description templates..."
+                            />
+                          </div>
                         </div>
                       )}
                     </div>
                   )}
 
-                  {wizardStep === 7 && (
+                  {wizardStep === 6 && (
                     <div style={{ maxWidth: 600, margin: "0 auto" }}>
                       <div style={{ padding: 24, backgroundColor: "var(--bg-secondary)", borderRadius: 12, border: "1px solid var(--border-default)" }}>
                         <h3 style={{ fontSize: 20, fontWeight: 600, marginBottom: 24 }}>Ready to Generate</h3>
@@ -632,6 +716,20 @@ export default function BulkPage() {
                             🏪 {stores.find(s => s.id === selectedStoreId)?.name || "None Selected"}
                           </span>
                         </div>
+                        
+                        {/* SEO Fields in Review */}
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
+                          <span style={{ color: "var(--text-secondary)" }}>Title Pattern</span>
+                          <span style={{ fontWeight: 500, fontFamily: "monospace", fontSize: 11 }}>{seoTitlePattern}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
+                          <span style={{ color: "var(--text-secondary)" }}>Category & Tags</span>
+                          <div style={{ textAlign: "right" }}>
+                            <span className="badge badge-info" style={{ marginRight: 6 }}>📁 {seoCategory}</span>
+                            <span className="badge badge-secondary" style={{ fontSize: 10 }}>🏷️ {seoTags}</span>
+                          </div>
+                        </div>
+                        
                         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
                           <span style={{ color: "var(--text-secondary)" }}>Players Selected</span>
                           <span style={{ fontWeight: 500 }}>{selectedPlayerIds.length}</span>
