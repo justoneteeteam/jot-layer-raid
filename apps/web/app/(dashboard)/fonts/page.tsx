@@ -46,6 +46,28 @@ export default function FontsPage() {
     });
   }, []);
 
+  /* ── Load dynamic fonts for previews ── */
+  useEffect(() => {
+    uploadedFonts.forEach((f) => {
+      if (f.file_url && f.name) {
+        const alreadyLoaded = Array.from(document.fonts.values()).some(
+          (face) => face.family === f.name
+        );
+        if (!alreadyLoaded) {
+          const fontFace = new FontFace(f.name, `url('${f.file_url}')`, { display: 'swap' });
+          fontFace
+            .load()
+            .then((loaded) => {
+              document.fonts.add(loaded);
+            })
+            .catch((e) => {
+              console.error(`Error loading font ${f.name}:`, e);
+            });
+        }
+      }
+    });
+  }, [uploadedFonts]);
+
   /* ── Load font faces for preview ── */
   const loadFontPreview = useCallback((file: File): Promise<FontEntry> => {
     return new Promise((resolve) => {
@@ -284,9 +306,7 @@ export default function FontsPage() {
                       </td>
                       <td>
                         <div style={{ display: "flex", alignItems: "center" }}>
-                          {/* Basic way to load font from URL for preview if needed, but standard system fonts or preloaded fonts usually work best. 
-                              For external URLs we'd need a dynamic @font-face injection, or just show text for now. */}
-                          <div style={{ fontSize: 22, letterSpacing: 1, fontFamily: `"${font.name}", monospace` }}>
+                          <div style={{ fontSize: 22, letterSpacing: 1, fontFamily: font.name }}>
                             SMITH-NJIGBA 11
                           </div>
                         </div>

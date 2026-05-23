@@ -169,8 +169,44 @@ export default function EditorPage() {
   useEffect(() => {
     fonts.forEach(f => {
       if (f.file_url && f.name) {
-        const fontFace = new FontFace(f.name, `url('${f.file_url}')`, { display: 'swap' });
-        fontFace.load().then(loaded => document.fonts.add(loaded)).catch(e => console.error(e));
+        const alreadyLoaded = Array.from(document.fonts.values()).some(
+          (face) => face.family === f.name
+        );
+        
+        const loadFont = () => {
+          const fontFace = new FontFace(f.name, `url('${f.file_url}')`, { display: 'swap' });
+          fontFace.load().then(loaded => {
+            document.fonts.add(loaded);
+            
+            // Force Fabric.js to re-render all objects using this font
+            const fc = fcRef.current;
+            if (fc) {
+              fc.getObjects().forEach(obj => {
+                if (obj instanceof fabric.Textbox && obj.fontFamily === f.name) {
+                  obj.initDimensions();
+                  obj.dirty = true;
+                }
+              });
+              fc.requestRenderAll();
+            }
+          }).catch(e => console.error(`Error loading font ${f.name}:`, e));
+        };
+
+        if (!alreadyLoaded) {
+          loadFont();
+        } else {
+          // If already loaded, still force a layout refresh to be safe
+          const fc = fcRef.current;
+          if (fc) {
+            fc.getObjects().forEach(obj => {
+              if (obj instanceof fabric.Textbox && obj.fontFamily === f.name) {
+                obj.initDimensions();
+                obj.dirty = true;
+              }
+            });
+            fc.requestRenderAll();
+          }
+        }
       }
     });
   }, [fonts]);
@@ -408,8 +444,24 @@ export default function EditorPage() {
                 {fonts.length === 0 ? (
                   <div className="editor-empty" style={{ padding: 12 }}>No team fonts found. Using default.</div>
                 ) : (
-                  <select className="input" value={textProps.fontFamily} onChange={(e) => { setTextProps((p) => ({ ...p, fontFamily: e.target.value })); if(selectedObj) applyTextProp("fontFamily", e.target.value); }}>
-                    {fonts.map((f) => (<option key={f.id} value={f.name} style={{ fontFamily: `"${f.name}", monospace` }}>{f.name}</option>))}
+                  <select 
+                    className="input" 
+                    value={textProps.fontFamily} 
+                    style={{ fontFamily: textProps.fontFamily }}
+                    onChange={(e) => { 
+                      setTextProps((p) => ({ ...p, fontFamily: e.target.value })); 
+                      if(selectedObj) applyTextProp("fontFamily", e.target.value); 
+                    }}
+                  >
+                    {fonts.map((f) => (
+                      <option 
+                        key={f.id} 
+                        value={f.name} 
+                        style={{ fontFamily: f.name }}
+                      >
+                        {f.name}
+                      </option>
+                    ))}
                   </select>
                 )}
               </div>
@@ -485,9 +537,14 @@ export default function EditorPage() {
               <div className="editor-section">
                 <div className="editor-section-title">Typography</div>
                 <label className="editor-prop-label">Font Family</label>
-                <select className="input" value={textProps.fontFamily} onChange={(e) => applyTextProp("fontFamily", e.target.value)}>
+                <select 
+                  className="input" 
+                  value={textProps.fontFamily} 
+                  style={{ fontFamily: textProps.fontFamily }}
+                  onChange={(e) => applyTextProp("fontFamily", e.target.value)}
+                >
                   {fonts.length > 0 
-                    ? fonts.map((f) => (<option key={f.id} value={f.name}>{f.name}</option>))
+                    ? fonts.map((f) => (<option key={f.id} value={f.name} style={{ fontFamily: f.name }}>{f.name}</option>))
                     : <option value="Anton">Anton (Default)</option>
                   }
                 </select>

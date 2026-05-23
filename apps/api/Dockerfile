@@ -20,4 +20,6 @@ WORKDIR /app
 ENV PORT=8000
 EXPOSE ${PORT}
 
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT}
+# Run migration fix before starting the app, then start uvicorn
+# The migration script is idempotent — safe to run on every deploy
+CMD sh -c "python fix_migration.py || true; uvicorn main:app --host 0.0.0.0 --port ${PORT}"
