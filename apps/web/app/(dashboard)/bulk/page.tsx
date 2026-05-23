@@ -56,9 +56,9 @@ export default function BulkPage() {
   const [selectedPatchId, setSelectedPatchId] = useState<number | "">("");
   
   // Sizing checkbox state
-  const [selectedMenSizes, setSelectedMenSizes] = useState<string[]>(["S", "M", "L", "XL", "2XL"]);
-  const [selectedWomenSizes, setSelectedWomenSizes] = useState<string[]>(["S", "M", "L"]);
-  const [selectedYouthSizes, setSelectedYouthSizes] = useState<string[]>([]);
+  const [selectedMenSizes, setSelectedMenSizes] = useState<string[]>(["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL"]);
+  const [selectedWomenSizes, setSelectedWomenSizes] = useState<string[]>(["XS", "S", "M", "L", "2XL", "3XL"]);
+  const [selectedYouthSizes, setSelectedYouthSizes] = useState<string[]>(["XS", "M", "L", "2XL", "3XL"]);
   const [customMenSize, setCustomMenSize] = useState("");
   const [customWomenSize, setCustomWomenSize] = useState("");
   const [customYouthSize, setCustomYouthSize] = useState("");
@@ -461,7 +461,7 @@ export default function BulkPage() {
                                         );
                                       }}
                                     />
-                                    <span>{size}</span>
+                                    <span>{size === "Custom Size" ? size : `Men ${size}`}</span>
                                   </label>
                                   {size === "Custom Size" && isChecked && (
                                     <input 
@@ -496,7 +496,7 @@ export default function BulkPage() {
                                         );
                                       }}
                                     />
-                                    <span>{size}</span>
+                                    <span>{size === "Custom Size" ? size : `Women ${size}`}</span>
                                   </label>
                                   {size === "Custom Size" && isChecked && (
                                     <input 
@@ -531,7 +531,7 @@ export default function BulkPage() {
                                         );
                                       }}
                                     />
-                                    <span>{size}</span>
+                                    <span>{size === "Custom Size" ? size : `Youth ${size}`}</span>
                                   </label>
                                   {size === "Custom Size" && isChecked && (
                                     <input 
