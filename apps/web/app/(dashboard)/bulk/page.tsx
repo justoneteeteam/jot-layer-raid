@@ -461,7 +461,23 @@ export default function BulkPage() {
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
                         {/* Men Size column */}
                         <div style={{ padding: 16, borderRadius: 8, border: "1px solid var(--border-default)", backgroundColor: "var(--bg-secondary)" }}>
-                          <h4 style={{ fontWeight: 600, fontSize: 14, marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 6 }}>🚹 Men Sizes</h4>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 6 }}>
+                            <h4 style={{ fontWeight: 600, fontSize: 14, margin: 0 }}>🚹 Men Sizes</h4>
+                            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, cursor: "pointer", userSelect: "none" }}>
+                              <input 
+                                type="checkbox" 
+                                checked={selectedMenSizes.length === MEN_SIZES.filter(x => x !== "Custom Size").length}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedMenSizes(MEN_SIZES.filter(x => x !== "Custom Size"));
+                                  } else {
+                                    setSelectedMenSizes([]);
+                                  }
+                                }}
+                              />
+                              <span style={{ fontWeight: 500, color: "var(--text-secondary)" }}>Select All</span>
+                            </label>
+                          </div>
                           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                             {MEN_SIZES.map(size => {
                               const isChecked = selectedMenSizes.includes(size);
@@ -496,7 +512,23 @@ export default function BulkPage() {
 
                         {/* Women Size column */}
                         <div style={{ padding: 16, borderRadius: 8, border: "1px solid var(--border-default)", backgroundColor: "var(--bg-secondary)" }}>
-                          <h4 style={{ fontWeight: 600, fontSize: 14, marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 6 }}>🚺 Women Sizes</h4>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 6 }}>
+                            <h4 style={{ fontWeight: 600, fontSize: 14, margin: 0 }}>🚺 Women Sizes</h4>
+                            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, cursor: "pointer", userSelect: "none" }}>
+                              <input 
+                                type="checkbox" 
+                                checked={selectedWomenSizes.length === WOMEN_SIZES.filter(x => x !== "Custom Size").length}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedWomenSizes(WOMEN_SIZES.filter(x => x !== "Custom Size"));
+                                  } else {
+                                    setSelectedWomenSizes([]);
+                                  }
+                                }}
+                              />
+                              <span style={{ fontWeight: 500, color: "var(--text-secondary)" }}>Select All</span>
+                            </label>
+                          </div>
                           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                             {WOMEN_SIZES.map(size => {
                               const isChecked = selectedWomenSizes.includes(size);
@@ -531,7 +563,23 @@ export default function BulkPage() {
 
                         {/* Youth Size column */}
                         <div style={{ padding: 16, borderRadius: 8, border: "1px solid var(--border-default)", backgroundColor: "var(--bg-secondary)" }}>
-                          <h4 style={{ fontWeight: 600, fontSize: 14, marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 6 }}>🧒 Youth Sizes</h4>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 6 }}>
+                            <h4 style={{ fontWeight: 600, fontSize: 14, margin: 0 }}>🧒 Youth Sizes</h4>
+                            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, cursor: "pointer", userSelect: "none" }}>
+                              <input 
+                                type="checkbox" 
+                                checked={selectedYouthSizes.length === YOUTH_SIZES.filter(x => x !== "Custom Size").length}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedYouthSizes(YOUTH_SIZES.filter(x => x !== "Custom Size"));
+                                  } else {
+                                    setSelectedYouthSizes([]);
+                                  }
+                                }}
+                              />
+                              <span style={{ fontWeight: 500, color: "var(--text-secondary)" }}>Select All</span>
+                            </label>
+                          </div>
                           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                             {YOUTH_SIZES.map(size => {
                               const isChecked = selectedYouthSizes.includes(size);
