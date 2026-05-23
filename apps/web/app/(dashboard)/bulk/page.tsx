@@ -67,13 +67,25 @@ export default function BulkPage() {
   const [selectedStoreId, setSelectedStoreId] = useState<number | "">("");
   const [seoTitlePattern, setSeoTitlePattern] = useState("{player_name} - {team_name} {template_name} Jersey");
   const [seoDescriptionHtml, setSeoDescriptionHtml] = useState(
-`<p>Gear up with the official <strong>{player_name}</strong> jersey! Custom crafted featuring high-quality fabric, athletic font styling, and team graphics.</p>
-<ul>
-  <li><strong>Player:</strong> {player_name} (#{player_number})</li>
-  <li><strong>Team:</strong> {team_name}</li>
-  <li><strong>Style:</strong> {template_name}</li>
-  <li><strong>Care:</strong> Machine wash cold, tumble dry low</li>
-</ul>`
+`<div class="product-description">
+  <p>Celebrate your team pride with the official <strong>{player_name}</strong> jersey! Features premium team graphics, athletic styling, and custom tailored typography.</p>
+  
+  <h3>Product Features:</h3>
+  <ul>
+    <li><strong>Player Name:</strong> {player_name}</li>
+    <li><strong>Player Number:</strong> #{player_number}</li>
+    <li><strong>Team:</strong> {team_name}</li>
+    <li><strong>Edition:</strong> {template_name}</li>
+  </ul>
+  
+  <h3>Specifications:</h3>
+  <ul>
+    <li>Material: 100% Recycled Polyester</li>
+    <li>Fit: Athletic cut for maximum comfort and style</li>
+    <li>Stitched name and numbers for authentic feel</li>
+    <li>Machine washable (wash cold, tumble dry low)</li>
+  </ul>
+</div>`
   );
   const [seoCategory, setSeoCategory] = useState("Jerseys");
   const [seoTags, setSeoTags] = useState("Jersey, {team_name}, {player_name}");
