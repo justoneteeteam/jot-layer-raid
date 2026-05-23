@@ -108,3 +108,17 @@ export async function uploadBackground(id: number | string, file: File): Promise
   if (!res.ok) throw new Error("Failed to upload background");
   return res.json();
 }
+
+export interface Store {
+  id: number;
+  name: string;
+  platform: string;
+  url: string;
+  is_active: boolean;
+}
+
+export async function fetchStores(): Promise<Store[]> {
+  const res = await fetch(`${API_BASE}/api/stores`);
+  if (!res.ok) throw new Error("Failed to fetch stores");
+  return res.json();
+}

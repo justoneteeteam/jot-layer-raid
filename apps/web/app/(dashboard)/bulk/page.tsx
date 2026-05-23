@@ -1,16 +1,34 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Team, Template, Player, Font, Patch, fetchTeams, fetchTemplates, fetchPlayers, fetchFonts, fetchPatches } from "../../lib/api";
+import { 
+  Team, 
+  Template, 
+  Player, 
+  Font, 
+  Patch, 
+  Store, 
+  fetchTeams, 
+  fetchTemplates, 
+  fetchPlayers, 
+  fetchFonts, 
+  fetchPatches, 
+  fetchStores 
+} from "../../lib/api";
 
 const WIZARD_STEPS = [
   { num: 1, label: "Team & Template" },
   { num: 2, label: "Players" },
   { num: 3, label: "Font & Style" },
   { num: 4, label: "Sizing Mapping" },
-  { num: 5, label: "Variant Quantities" },
-  { num: 6, label: "Review & Run" },
+  { num: 5, label: "Variant Selection" },
+  { num: 6, label: "Store Mapping" },
+  { num: 7, label: "Review & Run" },
 ];
+
+const MEN_SIZES = ["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL", "Custom Size"];
+const WOMEN_SIZES = ["XS", "S", "M", "L", "2XL", "3XL", "Custom Size"];
+const YOUTH_SIZES = ["XS", "M", "L", "2XL", "3XL", "Custom Size"];
 
 export default function BulkPage() {
   const [showWizard, setShowWizard] = useState(false);
@@ -23,6 +41,7 @@ export default function BulkPage() {
   const [allPlayers, setAllPlayers] = useState<Player[]>([]);
   const [fonts, setFonts] = useState<Font[]>([]);
   const [patches, setPatches] = useState<Patch[]>([]);
+  const [stores, setStores] = useState<Store[]>([]);
 
   // Wizard State
   const [jobName, setJobName] = useState("");
@@ -36,23 +55,41 @@ export default function BulkPage() {
   const [numberColor, setNumberColor] = useState("#FFFFFF");
   const [selectedPatchId, setSelectedPatchId] = useState<number | "">("");
   
-  const [variants, setVariants] = useState([{ name: "Adult Standard", size: "L", qty: 1 }]);
+  // Sizing checkbox state
+  const [selectedMenSizes, setSelectedMenSizes] = useState<string[]>(["S", "M", "L", "XL", "2XL"]);
+  const [selectedWomenSizes, setSelectedWomenSizes] = useState<string[]>(["S", "M", "L"]);
+  const [selectedYouthSizes, setSelectedYouthSizes] = useState<string[]>([]);
+  const [customMenSize, setCustomMenSize] = useState("");
+  const [customWomenSize, setCustomWomenSize] = useState("");
+  const [customYouthSize, setCustomYouthSize] = useState("");
+
+  // Store selection state
+  const [selectedStoreId, setSelectedStoreId] = useState<number | "">("");
 
   const mockJobs = [
     { id: 1, name: "Eagles Full Roster 2026", team: "Philadelphia Eagles", template: "Eagles Home Green", status: "completed", total: 53, done: 53, created: "2026-05-08" },
     { id: 2, name: "Cowboys Legends Pack", team: "Dallas Cowboys", template: "Cowboys Away White", status: "running", total: 30, done: 18, created: "2026-05-10" },
   ];
 
-  // Load initial data (Teams, Templates, Patches)
+  // Load initial data (Teams, Templates, Patches, Stores)
   useEffect(() => {
     Promise.all([
       fetchTeams(),
       fetchTemplates(),
-      fetchPatches()
-    ]).then(([teamsData, templatesData, patchesData]) => {
+      fetchPatches(),
+      fetchStores().catch(() => [])
+    ]).then(([teamsData, templatesData, patchesData, storesData]) => {
       setTeams(teamsData);
       setTemplates(templatesData);
       setPatches(patchesData);
+      setStores(storesData);
+      
+      // Auto select first store if available
+      const firstStore = storesData[0];
+      if (firstStore) {
+        setSelectedStoreId(firstStore.id);
+      }
+      
       setLoading(false);
     }).catch(err => {
       console.error(err);
@@ -70,9 +107,8 @@ export default function BulkPage() {
         fetchFonts(Number(selectedTeamId))
       ]).then(([playersData, fontsData]) => {
         setAllPlayers(playersData);
-        // Also fetch global fonts just in case
+        // Fetch global fonts
         fetchFonts().then(globalFonts => {
-          // Merge avoiding duplicates
           const combined = [...fontsData];
           globalFonts.forEach(gf => {
             if (!combined.find(f => f.id === gf.id)) combined.push(gf);
@@ -107,15 +143,54 @@ export default function BulkPage() {
       alert("Please select at least one player.");
       return;
     }
+    if (wizardStep === 5) {
+      const totalChecked = selectedMenSizes.length + selectedWomenSizes.length + selectedYouthSizes.length;
+      if (totalChecked === 0) {
+        alert("Please select at least one size variant.");
+        return;
+      }
+    }
+    if (wizardStep === 6 && !selectedStoreId) {
+      alert("Please select a store to map the products.");
+      return;
+    }
     if (wizardStep < WIZARD_STEPS.length) setWizardStep(s => s + 1);
   };
 
   const handleStart = () => {
-    alert(`Started job: ${jobName || "Untitled"} with ${selectedPlayerIds.length} players! (Mock)`);
+    const selectedStore = stores.find(s => s.id === selectedStoreId);
+    alert(`🚀 Started job: ${jobName || "Untitled"} with ${selectedPlayerIds.length} players! Automatically pushing mockup products to connected store: ${selectedStore?.name || "Unknown Store"}!`);
     setShowWizard(false);
   };
 
-  const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  // Helper to compile final selected sizes list
+  const getSelectedSizesSummary = () => {
+    const list: string[] = [];
+    selectedMenSizes.forEach(s => {
+      if (s === "Custom Size") {
+        if (customMenSize) list.push(`Men ${customMenSize}`);
+      } else {
+        list.push(`Men ${s}`);
+      }
+    });
+    selectedWomenSizes.forEach(s => {
+      if (s === "Custom Size") {
+        if (customWomenSize) list.push(`Women ${customWomenSize}`);
+      } else {
+        list.push(`Women ${s}`);
+      }
+    });
+    selectedYouthSizes.forEach(s => {
+      if (s === "Custom Size") {
+        if (customYouthSize) list.push(`Youth ${customYouthSize}`);
+      } else {
+        list.push(`Youth ${s}`);
+      }
+    });
+    return list;
+  };
+
+  const activeSizes = getSelectedSizesSummary();
 
   return (
     <div>
@@ -208,8 +283,8 @@ export default function BulkPage() {
           display: "flex", alignItems: "center", justifyContent: "center",
         }} onClick={() => setShowWizard(false)}>
           <div style={{
-            background: "var(--bg-primary)", borderRadius: 12, width: 800,
-            maxHeight: "85vh", minHeight: 600, overflow: "hidden", boxShadow: "var(--shadow-lg)",
+            background: "var(--bg-primary)", borderRadius: 12, width: 850,
+            maxHeight: "90vh", minHeight: 620, overflow: "hidden", boxShadow: "var(--shadow-lg)",
             display: "flex", flexDirection: "column",
           }} onClick={e => e.stopPropagation()}>
 
@@ -225,7 +300,7 @@ export default function BulkPage() {
             <div style={{ padding: "16px 24px", borderBottom: "1px solid var(--border-default)", display: "flex", gap: 4 }}>
               {WIZARD_STEPS.map(step => (
                 <div key={step.num} style={{
-                  flex: 1, textAlign: "center", padding: "8px 4px", borderRadius: 6, fontSize: 11, fontWeight: 600,
+                  flex: 1, textAlign: "center", padding: "8px 4px", borderRadius: 6, fontSize: 10, fontWeight: 600,
                   background: wizardStep === step.num ? "var(--accent)" : wizardStep > step.num ? "var(--accent-light)" : "var(--bg-tertiary)",
                   color: wizardStep === step.num ? "white" : wizardStep > step.num ? "var(--accent)" : "var(--text-muted)",
                   cursor: "pointer", transition: "all 150ms ease",
@@ -250,7 +325,7 @@ export default function BulkPage() {
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
                         <div className="form-group">
                           <label className="form-label">Select Team</label>
-                          <select className="input" value={selectedTeamId} onChange={e => setSelectedTeamId(e.target.value ? Number(e.target.value) : "")}>
+                           <select className="input" value={selectedTeamId} onChange={e => setSelectedTeamId(e.target.value ? Number(e.target.value) : "")}>
                             <option value="">-- Choose a Team --</option>
                             {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                           </select>
@@ -362,20 +437,179 @@ export default function BulkPage() {
                   )}
 
                   {wizardStep === 5 && (
-                    <div style={{ maxWidth: 600, margin: "0 auto" }}>
-                      <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 16 }}>Define the output variants for each player.</p>
-                      {variants.map((v, i) => (
-                        <div key={i} style={{ display: "flex", gap: 12, marginBottom: 12, alignItems: "center" }}>
-                          <input className="input" style={{ flex: 2 }} value={v.name} onChange={(e) => { const newV = [...variants]; if (newV[i]) newV[i].name = e.target.value; setVariants(newV); }} />
-                          <input className="input" style={{ flex: 1 }} value={v.size} onChange={(e) => { const newV = [...variants]; if (newV[i]) newV[i].size = e.target.value; setVariants(newV); }} />
-                          <button className="btn btn-ghost" onClick={() => setVariants(variants.filter((_, idx) => idx !== i))}>🗑️</button>
+                    <div>
+                      <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 20 }}>
+                        Select the output sizes to generate variants for each player (multi-select checkboxes).
+                      </p>
+                      
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
+                        {/* Men Size column */}
+                        <div style={{ padding: 16, borderRadius: 8, border: "1px solid var(--border-default)", backgroundColor: "var(--bg-secondary)" }}>
+                          <h4 style={{ fontWeight: 600, fontSize: 14, marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 6 }}>🚹 Men Sizes</h4>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            {MEN_SIZES.map(size => {
+                              const isChecked = selectedMenSizes.includes(size);
+                              return (
+                                <div key={size} style={{ display: "flex", flexDirection: "column" }}>
+                                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                                    <input 
+                                      type="checkbox" 
+                                      checked={isChecked} 
+                                      onChange={() => {
+                                        setSelectedMenSizes(prev => 
+                                          prev.includes(size) ? prev.filter(s => s !== size) : [...prev, size]
+                                        );
+                                      }}
+                                    />
+                                    <span>{size}</span>
+                                  </label>
+                                  {size === "Custom Size" && isChecked && (
+                                    <input 
+                                      className="input" 
+                                      style={{ marginTop: 6, fontSize: 12, height: 32, padding: "4px 8px" }} 
+                                      placeholder="e.g. 6XL, 7XL" 
+                                      value={customMenSize} 
+                                      onChange={e => setCustomMenSize(e.target.value)}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
                         </div>
-                      ))}
-                      <button className="btn btn-secondary" style={{ width: "100%", marginTop: 8 }} onClick={() => setVariants([...variants, { name: "New Variant", size: "M", qty: 1 }])}>+ Add Variant</button>
+
+                        {/* Women Size column */}
+                        <div style={{ padding: 16, borderRadius: 8, border: "1px solid var(--border-default)", backgroundColor: "var(--bg-secondary)" }}>
+                          <h4 style={{ fontWeight: 600, fontSize: 14, marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 6 }}>🚺 Women Sizes</h4>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            {WOMEN_SIZES.map(size => {
+                              const isChecked = selectedWomenSizes.includes(size);
+                              return (
+                                <div key={size} style={{ display: "flex", flexDirection: "column" }}>
+                                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                                    <input 
+                                      type="checkbox" 
+                                      checked={isChecked} 
+                                      onChange={() => {
+                                        setSelectedWomenSizes(prev => 
+                                          prev.includes(size) ? prev.filter(s => s !== size) : [...prev, size]
+                                        );
+                                      }}
+                                    />
+                                    <span>{size}</span>
+                                  </label>
+                                  {size === "Custom Size" && isChecked && (
+                                    <input 
+                                      className="input" 
+                                      style={{ marginTop: 6, fontSize: 12, height: 32, padding: "4px 8px" }} 
+                                      placeholder="e.g. XXS" 
+                                      value={customWomenSize} 
+                                      onChange={e => setCustomWomenSize(e.target.value)}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Youth Size column */}
+                        <div style={{ padding: 16, borderRadius: 8, border: "1px solid var(--border-default)", backgroundColor: "var(--bg-secondary)" }}>
+                          <h4 style={{ fontWeight: 600, fontSize: 14, marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 6 }}>🧒 Youth Sizes</h4>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            {YOUTH_SIZES.map(size => {
+                              const isChecked = selectedYouthSizes.includes(size);
+                              return (
+                                <div key={size} style={{ display: "flex", flexDirection: "column" }}>
+                                  <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontSize: 13 }}>
+                                    <input 
+                                      type="checkbox" 
+                                      checked={isChecked} 
+                                      onChange={() => {
+                                        setSelectedYouthSizes(prev => 
+                                          prev.includes(size) ? prev.filter(s => s !== size) : [...prev, size]
+                                        );
+                                      }}
+                                    />
+                                    <span>{size}</span>
+                                  </label>
+                                  {size === "Custom Size" && isChecked && (
+                                    <input 
+                                      className="input" 
+                                      style={{ marginTop: 6, fontSize: 12, height: 32, padding: "4px 8px" }} 
+                                      placeholder="e.g. YS, YM" 
+                                      value={customYouthSize} 
+                                      onChange={e => setCustomYouthSize(e.target.value)}
+                                    />
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   )}
 
                   {wizardStep === 6 && (
+                    <div style={{ maxWidth: 600, margin: "0 auto" }}>
+                      <p style={{ fontSize: 14, color: "var(--text-secondary)", marginBottom: 20 }}>
+                        Select the store connection to push the generated jersey mockup products to.
+                      </p>
+                      
+                      {stores.length === 0 ? (
+                        <div style={{ padding: 32, border: "1px dashed var(--border-default)", borderRadius: 12, textAlign: "center" }}>
+                          <div style={{ fontSize: 40, marginBottom: 12 }}>🏪</div>
+                          <h4 style={{ fontWeight: 600, marginBottom: 6 }}>No connected stores found</h4>
+                          <p style={{ color: "var(--text-secondary)", fontSize: 13, marginBottom: 16 }}>
+                            Please connect a WooCommerce or ShopBase store in settings first.
+                          </p>
+                          <a href="/settings" className="btn btn-secondary" style={{ padding: "6px 12px", fontSize: 13 }}>
+                            ⚙️ Go to Store Settings
+                          </a>
+                        </div>
+                      ) : (
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontWeight: 600 }}>Select Active Store Mapping</label>
+                          <select 
+                            className="input" 
+                            value={selectedStoreId} 
+                            onChange={e => setSelectedStoreId(e.target.value ? Number(e.target.value) : "")}
+                          >
+                            <option value="">-- Choose a Connected Store --</option>
+                            {stores.map(s => (
+                              <option key={s.id} value={s.id}>
+                                {s.name} ({s.platform.toUpperCase()}) - {s.url}
+                              </option>
+                            ))}
+                          </select>
+                          
+                          {selectedStoreId && (
+                            <div style={{ 
+                              marginTop: 20, padding: 16, borderRadius: 8, 
+                              border: "1px solid var(--border-default)", backgroundColor: "var(--bg-secondary)",
+                              display: "flex", alignItems: "center", gap: 16
+                            }}>
+                              <div style={{ fontSize: 32 }}>🏪</div>
+                              <div>
+                                <div style={{ fontWeight: 600 }}>
+                                  {stores.find(s => s.id === selectedStoreId)?.name}
+                                </div>
+                                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
+                                  Platform: <span className="badge badge-info" style={{ textTransform: "uppercase" }}>{stores.find(s => s.id === selectedStoreId)?.platform}</span>
+                                </div>
+                                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginTop: 2 }}>
+                                  Store URL: <a href={stores.find(s => s.id === selectedStoreId)?.url} target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>{stores.find(s => s.id === selectedStoreId)?.url}</a>
+                                </div>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {wizardStep === 7 && (
                     <div style={{ maxWidth: 600, margin: "0 auto" }}>
                       <div style={{ padding: 24, backgroundColor: "var(--bg-secondary)", borderRadius: 12, border: "1px solid var(--border-default)" }}>
                         <h3 style={{ fontSize: 20, fontWeight: 600, marginBottom: 24 }}>Ready to Generate</h3>
@@ -393,12 +627,28 @@ export default function BulkPage() {
                           <span style={{ fontWeight: 500 }}>{templates.find(t => t.id === selectedTemplateId)?.name || "None"}</span>
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
+                          <span style={{ color: "var(--text-secondary)" }}>Target Store</span>
+                          <span style={{ fontWeight: 600, color: "var(--accent)" }}>
+                            🏪 {stores.find(s => s.id === selectedStoreId)?.name || "None Selected"}
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
                           <span style={{ color: "var(--text-secondary)" }}>Players Selected</span>
                           <span style={{ fontWeight: 500 }}>{selectedPlayerIds.length}</span>
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
+                          <span style={{ color: "var(--text-secondary)" }}>Selected Size Variants ({activeSizes.length})</span>
+                          <div style={{ textAlign: "right", maxWidth: 300, display: "flex", flexWrap: "wrap", gap: 4, justifyContent: "flex-end" }}>
+                            {activeSizes.map(s => (
+                              <span key={s} className="badge badge-info" style={{ fontSize: 10 }}>{s}</span>
+                            ))}
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
                           <span style={{ color: "var(--text-secondary)" }}>Total Combinations</span>
-                          <span style={{ fontWeight: 600, color: "var(--primary)" }}>{selectedPlayerIds.length * variants.length} Images</span>
+                          <span style={{ fontWeight: 600, color: "var(--primary)" }}>
+                            {selectedPlayerIds.length * activeSizes.length} Images
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -429,3 +679,4 @@ export default function BulkPage() {
     </div>
   );
 }
+
