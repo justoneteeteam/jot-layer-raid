@@ -21,8 +21,9 @@ const WIZARD_STEPS = [
   { num: 2, label: "Players" },
   { num: 3, label: "Font & Style" },
   { num: 4, label: "Variant Selection" },
-  { num: 5, label: "Store & SEO" },
-  { num: 6, label: "Review & Run" },
+  { num: 5, label: "Store Mapping" },
+  { num: 6, label: "SEO Setup" },
+  { num: 7, label: "Review & Run" },
 ];
 
 const MEN_SIZES = ["S", "M", "L", "XL", "2XL", "3XL", "4XL", "5XL", "Custom Size"];
@@ -555,7 +556,7 @@ export default function BulkPage() {
                   )}
 
                   {wizardStep === 5 && (
-                    <div style={{ maxWidth: 800, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
+                    <div style={{ maxWidth: 600, margin: "0 auto", display: "flex", flexDirection: "column", gap: 24 }}>
                       <div>
                         <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>🏪 Store Connection</h3>
                         <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 16 }}>
@@ -610,90 +611,92 @@ export default function BulkPage() {
                           </div>
                         )}
                       </div>
-
-                      {selectedStoreId && (
-                        <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: 24 }}>
-                          <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>🌐 SEO & E-commerce Listing Settings</h3>
-                          <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 20 }}>
-                            Configure the titles, descriptions, categories, and tags to push to your storefront. Use dynamic tags to substitute player-specific metadata.
-                          </p>
-
-                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-                            <div className="form-group">
-                              <label className="form-label" style={{ fontWeight: 600, fontSize: 13 }}>Product Title Pattern</label>
-                              <input 
-                                className="input" 
-                                value={seoTitlePattern} 
-                                onChange={e => setSeoTitlePattern(e.target.value)} 
-                                placeholder="e.g. {player_name} Jersey"
-                              />
-                              <span style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, display: "block" }}>
-                                Example: <em>John Doe - Eagles Home Green Jersey</em>
-                              </span>
-                            </div>
-                            
-                            <div className="form-group" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-                              <div>
-                                <label className="form-label" style={{ fontWeight: 600, fontSize: 13 }}>Product Category</label>
-                                <input 
-                                  className="input" 
-                                  value={seoCategory} 
-                                  onChange={e => setSeoCategory(e.target.value)} 
-                                  placeholder="e.g. Jerseys, NFL Apparel"
-                                />
-                              </div>
-                              <div>
-                                <label className="form-label" style={{ fontWeight: 600, fontSize: 13 }}>Product Tags</label>
-                                  <input 
-                                  className="input" 
-                                  value={seoTags} 
-                                  onChange={e => setSeoTags(e.target.value)} 
-                                  placeholder="e.g. jerseys, NFL, fanwear"
-                                />
-                              </div>
-                            </div>
-                          </div>
-
-                          <div className="form-group">
-                            <label className="form-label" style={{ fontWeight: 600, fontSize: 13 }}>
-                              Description HTML Setup
-                            </label>
-                            
-                            {/* Variable chips helper */}
-                            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8, alignItems: "center" }}>
-                              <span style={{ fontSize: 11, color: "var(--text-secondary)", marginRight: 4 }}>Available placeholders (click to insert):</span>
-                              {["{player_name}", "{player_number}", "{team_name}", "{template_name}"].map(token => (
-                                <button 
-                                  key={token}
-                                  type="button"
-                                  className="badge badge-info"
-                                  style={{ border: "none", cursor: "pointer", padding: "2px 6px", fontSize: 10, textTransform: "none" }}
-                                  onClick={() => {
-                                    setSeoDescriptionHtml(prev => prev + " " + token);
-                                  }}
-                                >
-                                  {token}
-                                </button>
-                              ))}
-                            </div>
-
-                            <textarea 
-                              className="input" 
-                              style={{ 
-                                height: 160, fontFamily: "Consolas, Monaco, monospace", fontSize: 12, lineHeight: "1.5",
-                                backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", padding: "12px", borderRadius: 8
-                              }}
-                              value={seoDescriptionHtml} 
-                              onChange={e => setSeoDescriptionHtml(e.target.value)}
-                              placeholder="Write standard HTML description templates..."
-                            />
-                          </div>
-                        </div>
-                      )}
                     </div>
                   )}
 
                   {wizardStep === 6 && (
+                    <div style={{ maxWidth: 800, margin: "0 auto", display: "flex", flexDirection: "column", gap: 16 }}>
+                      <div>
+                        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8, display: "flex", alignItems: "center", gap: 8 }}>🌐 SEO Setup</h3>
+                        <p style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: 20 }}>
+                          Configure the titles, descriptions, categories, and tags to push to your storefront. Use dynamic tags to substitute player-specific metadata.
+                        </p>
+
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
+                          <div className="form-group">
+                            <label className="form-label" style={{ fontWeight: 600, fontSize: 13 }}>Product Title Pattern</label>
+                            <input 
+                              className="input" 
+                              value={seoTitlePattern} 
+                              onChange={e => setSeoTitlePattern(e.target.value)} 
+                              placeholder="e.g. {player_name} Jersey"
+                            />
+                            <span style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4, display: "block" }}>
+                              Example: <em>John Doe - Eagles Home Green Jersey</em>
+                            </span>
+                          </div>
+                          
+                          <div className="form-group" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                            <div>
+                              <label className="form-label" style={{ fontWeight: 600, fontSize: 13 }}>Product Category</label>
+                              <input 
+                                className="input" 
+                                value={seoCategory} 
+                                onChange={e => setSeoCategory(e.target.value)} 
+                                placeholder="e.g. Jerseys, NFL Apparel"
+                              />
+                            </div>
+                            <div>
+                              <label className="form-label" style={{ fontWeight: 600, fontSize: 13 }}>Product Tags</label>
+                              <input 
+                                className="input" 
+                                value={seoTags} 
+                                onChange={e => setSeoTags(e.target.value)} 
+                                placeholder="e.g. jerseys, NFL, fanwear"
+                              />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="form-group">
+                          <label className="form-label" style={{ fontWeight: 600, fontSize: 13 }}>
+                            Description HTML Setup
+                          </label>
+                          
+                          {/* Variable chips helper */}
+                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8, alignItems: "center" }}>
+                            <span style={{ fontSize: 11, color: "var(--text-secondary)", marginRight: 4 }}>Available placeholders (click to insert):</span>
+                            {["{player_name}", "{player_number}", "{team_name}", "{template_name}"].map(token => (
+                              <button 
+                                key={token}
+                                type="button"
+                                className="badge badge-info"
+                                style={{ border: "none", cursor: "pointer", padding: "2px 6px", fontSize: 10, textTransform: "none" }}
+                                onClick={() => {
+                                  setSeoDescriptionHtml(prev => prev + " " + token);
+                                }}
+                              >
+                                {token}
+                              </button>
+                            ))}
+                          </div>
+
+                          <textarea 
+                            className="input" 
+                            style={{ 
+                              height: 160, fontFamily: "Consolas, Monaco, monospace", fontSize: 12, lineHeight: "1.5",
+                              backgroundColor: "var(--bg-tertiary)", color: "var(--text-primary)", padding: "12px", borderRadius: 8
+                            }}
+                            value={seoDescriptionHtml} 
+                            onChange={e => setSeoDescriptionHtml(e.target.value)}
+                            placeholder="Write standard HTML description templates..."
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {wizardStep === 7 && (
                     <div style={{ maxWidth: 600, margin: "0 auto" }}>
                       <div style={{ padding: 24, backgroundColor: "var(--bg-secondary)", borderRadius: 12, border: "1px solid var(--border-default)" }}>
                         <h3 style={{ fontSize: 20, fontWeight: 600, marginBottom: 24 }}>Ready to Generate</h3>
