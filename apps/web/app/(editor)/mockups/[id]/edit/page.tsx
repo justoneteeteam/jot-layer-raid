@@ -110,21 +110,65 @@ export default function EditorPage() {
       if (template.canvas_json) {
         let freshJson = { ...template.canvas_json };
         const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        
+        // If the background was stored in the legacy format as freshJson.backgroundImage,
+        // we swap in the fresh URL, but we will also extract it into a standard object after loading.
         try {
           const res = await fetch(`${API_BASE}/api/mockups/templates/${template.id}/layers`);
           const data = await res.json();
-          if (data.layers?.original && freshJson.backgroundImage) {
-            // Swap in fresh, non-expired background image URL
-            freshJson.backgroundImage.src = data.layers.original;
+          if (data.layers?.original) {
+            if (freshJson.backgroundImage) {
+              freshJson.backgroundImage.src = data.layers.original;
+            }
+            
+            // Also scan standard objects array in JSON to update the background image source
+            if (Array.isArray(freshJson.objects)) {
+              freshJson.objects.forEach((obj: any) => {
+                if (obj._isJerseyBackground || obj._layerLabel === "Jersey Background") {
+                  obj.src = data.layers.original;
+                }
+              });
+            }
           }
         } catch (e) {
           console.error("Error refreshing background URL in canvas JSON:", e);
         }
+        
         await fc.loadFromJSON(freshJson);
+
+        // Post-processing: If loaded as legacy fc.backgroundImage, convert it to a standard bottom layer object
+        if (fc.backgroundImage) {
+          const bgImg = fc.backgroundImage;
+          bgImg.set({
+            selectable: true,
+            hasControls: true,
+            lockUniScaling: false,
+          });
+          (bgImg as any)._layerLabel = "Jersey Background";
+          (bgImg as any)._isJerseyBackground = true;
+
+          fc.backgroundImage = undefined;
+          fc.add(bgImg);
+          fc.sendObjectToBack(bgImg);
+        }
+
+        // Post-processing: Ensure loaded standard background objects have correct select and control properties
+        fc.getObjects().forEach(obj => {
+          if ((obj as any)._isJerseyBackground || (obj as any)._layerLabel === "Jersey Background") {
+            obj.set({
+              selectable: true,
+              hasControls: true,
+              lockUniScaling: false,
+            });
+            (obj as any)._isJerseyBackground = true;
+            (obj as any)._layerLabel = "Jersey Background";
+          }
+        });
+
         fc.renderAll();
         refreshLayers();
       } else if (template.original_image_url) {
-        // Fetch presigned URL via layers endpoint
+        // Fetch original image and add as standard bottom layer object
         const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
         try {
           const res = await fetch(`${API_BASE}/api/mockups/templates/${template.id}/layers`);
@@ -134,8 +178,20 @@ export default function EditorPage() {
             const scale = Math.min(800 / (img.width || 800), 1000 / (img.height || 1000));
             img.scaleX = scale;
             img.scaleY = scale;
-            img.set({ originX: "center", originY: "center", left: 400, top: 500 });
-            fc.backgroundImage = img;
+            img.set({ 
+              originX: "center", 
+              originY: "center", 
+              left: 400, 
+              top: 500,
+              selectable: true,
+              hasControls: true,
+              lockUniScaling: false,
+            });
+            (img as any)._layerLabel = "Jersey Background";
+            (img as any)._isJerseyBackground = true;
+
+            fc.add(img);
+            fc.sendObjectToBack(img);
             fc.renderAll();
           }
         } catch (e) { console.error("Error loading background", e); }
@@ -313,13 +369,31 @@ export default function EditorPage() {
       const data = await res.json();
       
       if (data.layers?.original) {
+        // Remove existing background layer if it exists
+        const existingBg = fc.getObjects().find(o => (o as any)._isJerseyBackground);
+        if (existingBg) fc.remove(existingBg);
+
         const img = await fabric.FabricImage.fromURL(data.layers.original, { crossOrigin: "anonymous" });
         const scale = Math.min(800 / (img.width || 800), 1000 / (img.height || 1000));
         img.scaleX = scale;
         img.scaleY = scale;
-        img.set({ originX: "center", originY: "center", left: 400, top: 500 });
-        fc.backgroundImage = img;
+        img.set({ 
+          originX: "center", 
+          originY: "center", 
+          left: 400, 
+          top: 500,
+          selectable: true,
+          hasControls: true,
+          lockUniScaling: false,
+        });
+        (img as any)._layerLabel = "Jersey Background";
+        (img as any)._isJerseyBackground = true;
+        
+        fc.add(img);
+        fc.sendObjectToBack(img);
+        fc.setActiveObject(img);
         fc.renderAll();
+        setSelectedObj(img);
       }
       
       // Auto-save the new canvas JSON
@@ -389,10 +463,15 @@ export default function EditorPage() {
     setSaving(true);
     try {
       const json = fc.toJSON();
-      // Preserve _layerLabel custom properties in JSON
+      // Preserve _layerLabel and _isJerseyBackground custom properties in JSON
       fc.getObjects().forEach((obj, i) => {
-        if ((obj as any)._layerLabel && json.objects[i]) {
-          json.objects[i]._layerLabel = (obj as any)._layerLabel;
+        if (json.objects[i]) {
+          if ((obj as any)._layerLabel) {
+            json.objects[i]._layerLabel = (obj as any)._layerLabel;
+          }
+          if ((obj as any)._isJerseyBackground) {
+            json.objects[i]._isJerseyBackground = (obj as any)._isJerseyBackground;
+          }
         }
       });
       await saveTemplate(template.id, {
