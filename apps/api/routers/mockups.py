@@ -4,13 +4,16 @@ import uuid
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status, Request
+from fastapi.responses import StreamingResponse
+import io
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from database import get_db
 from models.mockup_template import MockupTemplate
 from services.r2_storage import upload_file_to_r2, get_presigned_url
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -138,21 +141,59 @@ def delete_template(template_id: int, db: Session = Depends(get_db)):
 
 
 @router.get("/templates/{template_id}/layers")
-def get_template_layers(template_id: int, db: Session = Depends(get_db)):
-    """Get presigned or public CDN URLs for template background."""
+def get_template_layers(
+    template_id: int, 
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    """Get presigned, public CDN, or local proxy URLs for template background."""
     template = db.query(MockupTemplate).filter(MockupTemplate.id == template_id).first()
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
+
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    base_url = str(request.base_url)
+    if proto == "https" and base_url.startswith("http://"):
+        base_url = base_url.replace("http://", "https://", 1)
+    base_url = base_url.rstrip("/")
 
     layers = {}
     if template.original_image_url:
         layers["original"] = (
             f"{settings.R2_PUBLIC_URL.rstrip('/')}/{template.original_image_url}"
             if settings.R2_PUBLIC_URL
-            else get_presigned_url(template.original_image_url)
+            else f"{base_url}/api/mockups/templates/{template_id}/background/download"
         )
 
     return {
         "template_id": template_id,
         "layers": layers,
     }
+
+
+@router.get("/templates/{template_id}/background/download")
+def download_background(template_id: int, db: Session = Depends(get_db)):
+    """Serve/download the template background image directly from R2 to bypass CORS issues."""
+    template = db.query(MockupTemplate).filter(MockupTemplate.id == template_id).first()
+    if not template or not template.original_image_url:
+        raise HTTPException(status_code=404, detail="Background not found")
+        
+    try:
+        from services.r2_storage import get_r2_client
+        from config import settings
+        
+        client = get_r2_client()
+        response = client.get_object(Bucket=settings.R2_BUCKET_NAME, Key=template.original_image_url)
+        data = response["Body"].read()
+        
+        # Determine content type
+        content_type = "image/png"
+        ext = template.original_image_url.rsplit(".", 1)[-1].lower()
+        if ext in ("jpg", "jpeg"):
+            content_type = "image/jpeg"
+        elif ext == "webp":
+            content_type = "image/webp"
+            
+        return StreamingResponse(io.BytesIO(data), media_type=content_type)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error downloading background: {str(e)}")

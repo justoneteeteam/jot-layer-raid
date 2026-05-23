@@ -342,15 +342,22 @@ export default function EditorPage() {
   const addPatchImage = (url: string, label: string) => {
     const fc = fcRef.current;
     if (!fc) return;
-    fabric.FabricImage.fromURL(url, { crossOrigin: "anonymous" }).then((img) => {
-      img.scaleToWidth(100);
-      img.set({ left: 100, top: 100 });
-      (img as any)._layerLabel = label;
-      fc.add(img);
-      fc.setActiveObject(img);
-      fc.renderAll();
-      setSelectedObj(img);
-    });
+    console.log("Adding patch image from URL:", url);
+    fabric.FabricImage.fromURL(url, { crossOrigin: "anonymous" })
+      .then((img) => {
+        img.scaleToWidth(100);
+        img.set({ left: 100, top: 100 });
+        (img as any)._layerLabel = label;
+        fc.add(img);
+        fc.setActiveObject(img);
+        fc.renderAll();
+        setSelectedObj(img);
+        console.log("Successfully added patch image:", label);
+      })
+      .catch((err) => {
+        console.error("Failed to load patch image from URL:", url, err);
+        alert(`Failed to load patch: ${label}. Please verify that the image URL is accessible and that CORS is enabled.`);
+      });
   };
 
   const handleUploadBackground = async (e: React.ChangeEvent<HTMLInputElement>) => {

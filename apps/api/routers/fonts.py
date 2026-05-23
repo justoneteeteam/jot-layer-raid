@@ -1,9 +1,12 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Form, Request
+from fastapi.responses import StreamingResponse
+import io
 from sqlalchemy.orm import Session
 from typing import Optional
 from database import get_db
 from models.font import Font
 from services.r2_storage import upload_file_to_r2, get_presigned_url
+from config import settings
 import uuid
 
 router = APIRouter(prefix="/api/fonts", tags=["Fonts"])
@@ -11,6 +14,7 @@ router = APIRouter(prefix="/api/fonts", tags=["Fonts"])
 
 @router.get("")
 def list_fonts(
+    request: Request,
     team_id: Optional[int] = None,
     jersey_type: Optional[str] = None,
     db: Session = Depends(get_db)
@@ -23,6 +27,12 @@ def list_fonts(
         query = query.filter(Font.jersey_type == jersey_type)
         
     fonts = query.all()
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    base_url = str(request.base_url)
+    if proto == "https" and base_url.startswith("http://"):
+        base_url = base_url.replace("http://", "https://", 1)
+    base_url = base_url.rstrip("/")
+
     return [
         {
             "id": f.id,
@@ -30,7 +40,7 @@ def list_fonts(
             "file_url": (
                 f"{settings.R2_PUBLIC_URL.rstrip('/')}/{f.file_url}"
                 if settings.R2_PUBLIC_URL and f.file_url
-                else get_presigned_url(f.file_url) if f.file_url else ""
+                else f"{base_url}/api/fonts/{f.id}/download" if f.file_url else ""
             ),
             "preview_url": f.preview_url,
             "category": f.category,
@@ -95,3 +105,31 @@ def delete_font(font_id: int, db: Session = Depends(get_db)):
     db.delete(font)
     db.commit()
     return {"deleted": font_id}
+
+
+@router.get("/{font_id}/download")
+def download_font(font_id: int, db: Session = Depends(get_db)):
+    """Serve/download the font file directly from R2 via the API to bypass CORS limitations."""
+    font = db.query(Font).filter(Font.id == font_id).first()
+    if not font or not font.file_url:
+        raise HTTPException(status_code=404, detail="Font not found")
+    
+    try:
+        from services.r2_storage import get_r2_client
+        from config import settings
+        
+        client = get_r2_client()
+        response = client.get_object(Bucket=settings.R2_BUCKET_NAME, Key=font.file_url)
+        data = response["Body"].read()
+        
+        # Determine content type
+        ext = font.file_url.rsplit(".", 1)[-1].lower()
+        content_type = "font/ttf"
+        if ext == "otf":
+            content_type = "font/otf"
+        elif ext in ("woff", "woff2"):
+            content_type = f"font/{ext}"
+            
+        return StreamingResponse(io.BytesIO(data), media_type=content_type)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error downloading font: {str(e)}")
