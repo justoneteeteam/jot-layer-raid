@@ -1,4 +1,6 @@
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
+import io
 from sqlalchemy.orm import Session
 from database import get_db
 from models.patch import Patch
@@ -9,14 +11,17 @@ router = APIRouter(prefix="/api/patches", tags=["Patches"])
 
 
 @router.get("")
-def list_patches(db: Session = Depends(get_db)):
+def list_patches(
+    request: Request,
+    db: Session = Depends(get_db)
+):
     """List all patches."""
     patches = db.query(Patch).all()
     return [
         {
             "id": p.id,
             "name": p.name,
-            "image_url": get_presigned_url(p.image_url) if p.image_url else "",
+            "image_url": f"{request.base_url}api/patches/{p.id}/download" if p.image_url else "",
             "width": p.width,
             "height": p.height,
         }
@@ -58,3 +63,33 @@ def delete_patch(patch_id: int, db: Session = Depends(get_db)):
     db.delete(patch)
     db.commit()
     return {"deleted": patch_id}
+
+
+@router.get("/{patch_id}/download")
+def download_patch(patch_id: int, db: Session = Depends(get_db)):
+    """Serve/download the patch image directly from R2 to bypass CORS issues."""
+    patch = db.query(Patch).filter(Patch.id == patch_id).first()
+    if not patch or not patch.image_url:
+        raise HTTPException(status_code=404, detail="Patch not found")
+        
+    try:
+        from services.r2_storage import get_r2_client
+        from config import settings
+        
+        client = get_r2_client()
+        response = client.get_object(Bucket=settings.R2_BUCKET_NAME, Key=patch.image_url)
+        data = response["Body"].read()
+        
+        # Determine content type
+        content_type = "image/png"
+        ext = patch.image_url.rsplit(".", 1)[-1].lower()
+        if ext in ("jpg", "jpeg"):
+            content_type = "image/jpeg"
+        elif ext == "webp":
+            content_type = "image/webp"
+        elif ext == "svg":
+            content_type = "image/svg+xml"
+            
+        return StreamingResponse(io.BytesIO(data), media_type=content_type)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error downloading patch: {str(e)}")

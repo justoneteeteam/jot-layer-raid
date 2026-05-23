@@ -167,24 +167,25 @@ export default function EditorPage() {
 
   /* ── Load dynamic fonts into document ── */
   useEffect(() => {
+    const loadedFamilies = new Set<string>();
+
     fonts.forEach(f => {
       if (f.file_url && f.name) {
-        const alreadyLoaded = Array.from(document.fonts.values()).some(
-          (face) => face.family === f.name
-        );
-        
+        loadedFamilies.add(f.name);
+
+        const alreadyLoaded = document.fonts.check(`12px "${f.name}"`);
+
         const loadFont = () => {
           const fontFace = new FontFace(f.name, `url('${f.file_url}')`, { display: 'swap' });
           fontFace.load().then(loaded => {
             document.fonts.add(loaded);
-            
-            // Force Fabric.js to re-render all objects using this font
+
+            // Fabric.js v7: use set() to trigger internal property setter + re-measure
             const fc = fcRef.current;
             if (fc) {
               fc.getObjects().forEach(obj => {
                 if (obj instanceof fabric.Textbox && obj.fontFamily === f.name) {
-                  obj.initDimensions();
-                  obj.dirty = true;
+                  obj.set('fontFamily', f.name);
                 }
               });
               fc.requestRenderAll();
@@ -195,18 +196,32 @@ export default function EditorPage() {
         if (!alreadyLoaded) {
           loadFont();
         } else {
-          // If already loaded, still force a layout refresh to be safe
+          // Already in document.fonts, but still force Fabric refresh
           const fc = fcRef.current;
           if (fc) {
             fc.getObjects().forEach(obj => {
               if (obj instanceof fabric.Textbox && obj.fontFamily === f.name) {
-                obj.initDimensions();
-                obj.dirty = true;
+                obj.set('fontFamily', f.name);
               }
             });
             fc.requestRenderAll();
           }
         }
+      }
+    });
+
+    // After all async fonts settle, do a final canvas-wide refresh
+    document.fonts.ready.then(() => {
+      const fc = fcRef.current;
+      if (fc) {
+        let needsRefresh = false;
+        fc.getObjects().forEach(obj => {
+          if (obj instanceof fabric.Textbox && loadedFamilies.has(obj.fontFamily || '')) {
+            obj.set('fontFamily', obj.fontFamily || '');
+            needsRefresh = true;
+          }
+        });
+        if (needsRefresh) fc.requestRenderAll();
       }
     });
   }, [fonts]);
@@ -215,27 +230,42 @@ export default function EditorPage() {
   const addText = (preset: "name" | "number") => {
     const fc = fcRef.current;
     if (!fc) return;
-    
-    const defaultFont = fonts.length > 0 ? fonts[0]!.name : textProps.fontFamily;
-    
-    const t = new fabric.Textbox(preset === "name" ? "PLAYER NAME" : "00", {
-      left: 400, top: preset === "name" ? 300 : 500, originX: "center", originY: "center",
-      fontFamily: defaultFont, fontSize: preset === "name" ? 64 : 120,
-      fill: textProps.fill, stroke: textProps.stroke, strokeWidth: textProps.strokeWidth,
-      textAlign: "center", width: 500,
-      shadow: new fabric.Shadow({ color: textProps.shadowColor, blur: textProps.shadowBlur, offsetX: textProps.shadowOffsetX, offsetY: textProps.shadowOffsetY }),
-      paintFirst: "stroke",
-    });
-    (t as any)._layerLabel = preset === "name" ? "Player Name" : "Player Number";
-    fc.add(t);
-    fc.setActiveObject(t);
-    fc.renderAll();
-    setSelectedObj(t);
-    syncTextProps(t);
-    
-    if (fonts.length > 0) applyTextProp("fontFamily", defaultFont);
-  };
 
+    const defaultFont = fonts.length > 0 ? fonts[0]!.name : textProps.fontFamily;
+
+    const createTextbox = () => {
+      const t = new fabric.Textbox(preset === "name" ? "PLAYER NAME" : "00", {
+        left: 400, top: preset === "name" ? 300 : 500, originX: "center", originY: "center",
+        fontFamily: defaultFont, fontSize: preset === "name" ? 64 : 120,
+        fill: textProps.fill, stroke: textProps.stroke, strokeWidth: textProps.strokeWidth,
+        textAlign: "center", width: 500,
+        shadow: new fabric.Shadow({ color: textProps.shadowColor, blur: textProps.shadowBlur, offsetX: textProps.shadowOffsetX, offsetY: textProps.shadowOffsetY }),
+        paintFirst: "stroke",
+      });
+      (t as any)._layerLabel = preset === "name" ? "Player Name" : "Player Number";
+      fc.add(t);
+      fc.setActiveObject(t);
+      fc.renderAll();
+      setSelectedObj(t);
+      syncTextProps(t);
+
+      if (fonts.length > 0) applyTextProp("fontFamily", defaultFont);
+    };
+
+    // Ensure the selected font is fully loaded before creating the Textbox.
+    // Fabric.js v7 caches text dimensions on creation — if the font isn't ready,
+    // the textbox will permanently render with fallback font metrics.
+    if (defaultFont && !document.fonts.check(`12px "${defaultFont}"`)) {
+      document.fonts.load(`12px "${defaultFont}"`).then(() => {
+        createTextbox();
+      }).catch(() => {
+        // Font failed to load — create anyway with fallback
+        createTextbox();
+      });
+    } else {
+      createTextbox();
+    }
+  };
   const addPatchImage = (url: string, label: string) => {
     const fc = fcRef.current;
     if (!fc) return;
