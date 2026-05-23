@@ -54,7 +54,7 @@ export default function FontsPage() {
           (face) => face.family === f.name
         );
         if (!alreadyLoaded) {
-          const fontFace = new FontFace(f.name, `url('${f.file_url}')`, { display: 'swap' });
+          const fontFace = new FontFace(f.name, `url(${f.file_url})`, { display: 'swap' });
           fontFace
             .load()
             .then((loaded) => {

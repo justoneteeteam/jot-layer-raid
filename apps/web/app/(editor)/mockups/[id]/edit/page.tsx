@@ -108,7 +108,19 @@ export default function EditorPage() {
     // Load saved state or default background
     const initCanvas = async () => {
       if (template.canvas_json) {
-        await fc.loadFromJSON(template.canvas_json);
+        let freshJson = { ...template.canvas_json };
+        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        try {
+          const res = await fetch(`${API_BASE}/api/mockups/templates/${template.id}/layers`);
+          const data = await res.json();
+          if (data.layers?.original && freshJson.backgroundImage) {
+            // Swap in fresh, non-expired background image URL
+            freshJson.backgroundImage.src = data.layers.original;
+          }
+        } catch (e) {
+          console.error("Error refreshing background URL in canvas JSON:", e);
+        }
+        await fc.loadFromJSON(freshJson);
         fc.renderAll();
         refreshLayers();
       } else if (template.original_image_url) {
@@ -178,7 +190,7 @@ export default function EditorPage() {
         );
 
         const loadFont = () => {
-          const fontFace = new FontFace(f.name, `url('${f.file_url}')`, { display: 'swap' });
+          const fontFace = new FontFace(f.name, `url(${f.file_url})`, { display: 'swap' });
           fontFace.load().then(loaded => {
             document.fonts.add(loaded);
 
