@@ -173,19 +173,22 @@ export default function EditorPage() {
       if (f.file_url && f.name) {
         loadedFamilies.add(f.name);
 
-        const alreadyLoaded = document.fonts.check(`12px "${f.name}"`);
+        const alreadyLoaded = Array.from(document.fonts.values()).some(
+          (face) => face.family === f.name
+        );
 
         const loadFont = () => {
           const fontFace = new FontFace(f.name, `url('${f.file_url}')`, { display: 'swap' });
           fontFace.load().then(loaded => {
             document.fonts.add(loaded);
 
-            // Fabric.js v7: use set() to trigger internal property setter + re-measure
+            // Force Fabric.js to re-measure and re-render all objects using this font
             const fc = fcRef.current;
             if (fc) {
               fc.getObjects().forEach(obj => {
                 if (obj instanceof fabric.Textbox && obj.fontFamily === f.name) {
-                  obj.set('fontFamily', f.name);
+                  obj.initDimensions();
+                  obj.dirty = true;
                 }
               });
               fc.requestRenderAll();
@@ -201,7 +204,8 @@ export default function EditorPage() {
           if (fc) {
             fc.getObjects().forEach(obj => {
               if (obj instanceof fabric.Textbox && obj.fontFamily === f.name) {
-                obj.set('fontFamily', f.name);
+                obj.initDimensions();
+                obj.dirty = true;
               }
             });
             fc.requestRenderAll();
@@ -217,7 +221,8 @@ export default function EditorPage() {
         let needsRefresh = false;
         fc.getObjects().forEach(obj => {
           if (obj instanceof fabric.Textbox && loadedFamilies.has(obj.fontFamily || '')) {
-            obj.set('fontFamily', obj.fontFamily || '');
+            obj.initDimensions();
+            obj.dirty = true;
             needsRefresh = true;
           }
         });
