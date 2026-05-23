@@ -645,9 +645,15 @@ export default function BulkPage() {
                           </div>
                         </div>
                         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
-                          <span style={{ color: "var(--text-secondary)" }}>Total Combinations</span>
+                          <span style={{ color: "var(--text-secondary)" }}>Total Products</span>
                           <span style={{ fontWeight: 600, color: "var(--primary)" }}>
-                            {selectedPlayerIds.length * activeSizes.length} Images
+                            {selectedPlayerIds.length} Products
+                          </span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
+                          <span style={{ color: "var(--text-secondary)" }}>Mockup Images</span>
+                          <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>
+                            {selectedPlayerIds.length} Images (1 per product)
                           </span>
                         </div>
                       </div>
