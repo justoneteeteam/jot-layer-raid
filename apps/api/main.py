@@ -8,6 +8,7 @@ from routers import patches as patches_router
 from routers import database_import
 from routers import stores as stores_router
 from routers import mockups as mockups_router
+from routers import bulk as bulk_router
 
 # Create all tables (only creates NEW tables, not columns)
 Base.metadata.create_all(bind=engine)
@@ -80,6 +81,8 @@ app.include_router(patches_router.router)
 app.include_router(database_import.router)
 app.include_router(stores_router.router)
 app.include_router(mockups_router.router)
+app.include_router(bulk_router.router)
+
 
 
 @app.get("/api/health")

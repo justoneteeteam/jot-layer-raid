@@ -34,6 +34,8 @@ export default function BulkPage() {
   const [showWizard, setShowWizard] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
 
   // Data from API
   const [teams, setTeams] = useState<Team[]>([]);
@@ -181,11 +183,43 @@ export default function BulkPage() {
     if (wizardStep < WIZARD_STEPS.length) setWizardStep(s => s + 1);
   };
 
-  const handleStart = () => {
-    const selectedStore = stores.find(s => s.id === selectedStoreId);
-    alert(`🚀 Started bulk generation job "${jobName || "Untitled"}" for ${selectedPlayerIds.length} players!\n\nStore Connection: ${selectedStore?.name || "Unknown"} (${selectedStore?.platform.toUpperCase()})\nTitle Pattern: ${seoTitlePattern}\nCategory: ${seoCategory}\nTags: ${seoTags}\n\nProducts and mockups will automatically generate and push to your store storefront!`);
-    setShowWizard(false);
+  const handleStart = async () => {
+    const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    setSubmitting(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/bulk/jobs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: jobName || `Bulk Job for ${teams.find(t => t.id === selectedTeamId)?.name}`,
+          team_id: Number(selectedTeamId),
+          template_id: Number(selectedTemplateId),
+          player_ids: selectedPlayerIds,
+          sizes: activeSizes,
+          store_id: Number(selectedStoreId),
+          seo_title_pattern: seoTitlePattern,
+          seo_description_html: seoDescriptionHtml,
+          seo_category: seoCategory,
+          seo_tags: seoTags
+        })
+      });
+      if (!res.ok) {
+        throw new Error("Failed to trigger bulk generation job");
+      }
+      const data = await res.json();
+      alert(`🚀 Bulk job triggered successfully! Job ID: ${data.job_id}`);
+      setShowWizard(false);
+      
+      // Refresh the page/jobs list
+      window.location.reload();
+    } catch (err: any) {
+      console.error(err);
+      alert(`❌ Error starting bulk job: ${err.message || err}`);
+    } finally {
+      setSubmitting(false);
+    }
   };
+
 
   // Helper to compile final selected sizes list
   const getSelectedSizesSummary = () => {
@@ -836,8 +870,9 @@ export default function BulkPage() {
                 className="btn btn-primary"
                 onClick={() => wizardStep === WIZARD_STEPS.length ? handleStart() : handleNext()}
                 style={wizardStep === WIZARD_STEPS.length ? { backgroundColor: "#2e7d32", color: "#fff", border: "none" } : {}}
+                disabled={submitting}
               >
-                {wizardStep === WIZARD_STEPS.length ? "🚀 Start Bulk Job" : "Next →"}
+                {wizardStep === WIZARD_STEPS.length ? (submitting ? "⏳ Starting..." : "🚀 Start Bulk Job") : "Next →"}
               </button>
             </div>
           </div>

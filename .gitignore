@@ -45,3 +45,8 @@ test_r2.py
 # Misc
 .DS_Store
 *.pem
+
+# Credentials and Test Scripts
+settings.json
+trigger_test_job.py
+run_production_test_end_to_end.py
