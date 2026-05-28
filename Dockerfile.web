@@ -54,6 +54,7 @@ USER nextjs
 
 # Railway injects PORT
 ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
 EXPOSE ${PORT}
 
 CMD ["node", "apps/web/server.js"]

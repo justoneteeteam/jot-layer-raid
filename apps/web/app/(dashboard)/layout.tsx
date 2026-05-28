@@ -15,6 +15,12 @@ const navItems = [
   { label: "Roster Approval", icon: "✅", href: "/roster/approval" },
   { section: "PRODUCTION" },
   { label: "Bulk Generator", icon: "⚙️", href: "/bulk" },
+  { section: "ORDER MANAGEMENT (OMS)" },
+  { label: "Orders & Sync", icon: "📦", href: "/oms" },
+  { label: "WeChat Tracking", icon: "📁", href: "/oms/wechat" },
+  { label: "Customer CRM", icon: "👥", href: "/oms/customers" },
+  { label: "Product Catalog", icon: "🎽", href: "/oms/products" },
+  { label: "Email", icon: "✉️", href: "/oms/tickets" },
   { section: "SYSTEM" },
   { label: "Settings", icon: "🔧", href: "/settings" },
 ];
