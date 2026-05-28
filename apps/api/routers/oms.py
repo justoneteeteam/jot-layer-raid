@@ -84,7 +84,7 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
     platforms_to_clear = [platform_lower] if platform_lower != "all" else ["shopbase", "woocommerce", "astro"]
     
     # Always delete mock orders
-    db.query(Order).filter(Order.store_id.in_(["WOC 3065", "SB_14632", "SB_14629", "SB_14628", "SB_14626", "SB_14625", "SB_14632"])).delete(synchronize_session=False)
+    db.query(Order).filter(Order.store_id.like("MOCK_%")).delete(synchronize_session=False)
     
     for plat in platforms_to_clear:
         if plat == "shopbase":
@@ -180,7 +180,7 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
                                 variant_val = item.get('variant_options') or (variant.split('/')[-1].strip() if '/' in variant else variant[:10])
                                 
                                 new_order = Order(
-                                    store_id="SB_WAIR",
+                                    store_id=store.name,
                                     order_id=mapped_order_id,
                                     order_name=str(order_obj.get('order_number')),
                                     customer_name=customer_name,
@@ -333,7 +333,7 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
                                     variant_val = item.get('meta_data', [{}])[0].get('value', 'Defa') if item.get('meta_data') else 'Defa'
 
                                 new_order = Order(
-                                    store_id="WOC 3065",
+                                    store_id=store.name,
                                     order_id=mapped_order_id,
                                     order_name=str(order_obj.get('number') or order_obj.get('id')),
                                     customer_name=customer_name,
