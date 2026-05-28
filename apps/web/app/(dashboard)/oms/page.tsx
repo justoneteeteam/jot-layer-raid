@@ -55,10 +55,12 @@ export default function OrdersPage() {
   const [rawOrders, setRawOrders] = useState<RawOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [searchField, setSearchField] = useState("all");
   const [platform, setPlatform] = useState("");
   const [shippingStatus, setShippingStatus] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [presetRange, setPresetRange] = useState("all");
   const [selectedOrderIds, setSelectedOrderIds] = useState<string[]>([]);
   const [trackSyncing, setTrackSyncing] = useState(false);
   const [exporting, setExporting] = useState(false);
@@ -77,7 +79,7 @@ export default function OrdersPage() {
           customer_name: o.customer_name,
           customer_address: o.customer_address,
           customer_email: o.customer_email,
-          revenue: o.revenue, // already order total revenue
+          revenue: o.revenue,
           shipping_status: o.shipping_status,
           tracking_number: o.tracking_number,
           email_sent: o.email_sent,
@@ -107,7 +109,10 @@ export default function OrdersPage() {
     setSyncNotice(null);
     try {
       const params = new URLSearchParams();
-      if (search) params.append("search", search);
+      if (search) {
+        params.append("search", search);
+        params.append("search_field", searchField);
+      }
       if (platform) params.append("platform", platform);
       if (shippingStatus) params.append("shipping_status", shippingStatus);
       if (startDate) params.append("start_date", startDate);
@@ -134,6 +139,51 @@ export default function OrdersPage() {
     if (e.key === "Enter") {
       loadOrders();
     }
+  };
+
+  // Date Preset calculation logic
+  const handlePresetRangeChange = (preset: string) => {
+    setPresetRange(preset);
+    if (preset === "custom") {
+      return;
+    }
+
+    const now = new Date();
+    let start = "";
+    let end = "";
+
+    const formatDate = (d: Date) => {
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, "0");
+      const day = String(d.getDate()).padStart(2, "0");
+      return `${y}-${m}-${day}`;
+    };
+
+    if (preset === "today") {
+      start = formatDate(now);
+      end = formatDate(now);
+    } else if (preset === "yesterday") {
+      const yesterday = new Date();
+      yesterday.setDate(now.getDate() - 1);
+      start = formatDate(yesterday);
+      end = formatDate(yesterday);
+    } else if (preset === "this_month") {
+      const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
+      start = formatDate(firstDay);
+      end = formatDate(now);
+    } else if (preset === "last_month") {
+      const firstDayLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const lastDayLastMonth = new Date(now.getFullYear(), now.getMonth(), 0);
+      start = formatDate(firstDayLastMonth);
+      end = formatDate(lastDayLastMonth);
+    } else {
+      // all time
+      start = "";
+      end = "";
+    }
+
+    setStartDate(start);
+    setEndDate(end);
   };
 
   // Selection handlers
@@ -182,7 +232,6 @@ export default function OrdersPage() {
     }
     setExporting(true);
     try {
-      // Gather database line item IDs belonging to selected grouped orders
       const selectedDbIds: number[] = [];
       groupedOrders.forEach((o) => {
         if (selectedOrderIds.includes(o.order_id)) {
@@ -269,45 +318,80 @@ export default function OrdersPage() {
 
       {/* Advanced Spreadsheet Filters & Calendar Range */}
       <div style={{ display: "flex", flexWrap: "wrap", gap: "12px", marginBottom: "20px", background: "var(--bg-secondary)", padding: "16px", borderRadius: "10px", border: "1px solid var(--border-default)", alignItems: "center" }}>
-        <div style={{ flex: "2 1 300px" }}>
-          <label style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)", display: "block", marginBottom: "4px" }}>SEARCH KEYWORD</label>
-          <input
-            type="text"
-            className="form-control"
-            placeholder="Search by buyer, order ID, product name..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            onKeyDown={handleSearchKeyDown}
-            style={{ width: "100%", padding: "8px 12px", border: "1px solid var(--border-default)", borderRadius: "6px", height: "40px" }}
-          />
+        
+        {/* Granular Search Category Field */}
+        <div style={{ flex: "2 1 350px" }}>
+          <label style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)", display: "block", marginBottom: "4px" }}>SEARCH CATEGORY & INPUT</label>
+          <div style={{ display: "flex", width: "100%", border: "1px solid var(--border-default)", borderRadius: "6px", overflow: "hidden", background: "white" }}>
+            <select
+              value={searchField}
+              onChange={(e) => setSearchField(e.target.value)}
+              style={{ padding: "8px 12px", border: "none", borderRight: "1px solid var(--border-default)", outline: "none", background: "var(--bg-secondary)", height: "38px", width: "150px", fontSize: "13px", fontWeight: "500", color: "var(--text-primary)" }}
+            >
+              <option value="all">🔍 All Fields</option>
+              <option value="order_id">🏷️ Order ID</option>
+              <option value="customer_name">👥 Customer Name</option>
+              <option value="customer_email">✉️ Email</option>
+              <option value="product_name">🎽 Product Name</option>
+            </select>
+            <input
+              type="text"
+              placeholder={`Type query to search...`}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={handleSearchKeyDown}
+              style={{ flex: 1, padding: "8px 12px", border: "none", outline: "none", height: "38px", fontSize: "14px" }}
+            />
+          </div>
         </div>
         
-        {/* Calendar Range Filters */}
+        {/* Date Range Preset Dropdown */}
         <div style={{ flex: "1 1 150px" }}>
-          <label style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)", display: "block", marginBottom: "4px" }}>START DATE</label>
-          <input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            style={{ width: "100%", padding: "8px 12px", border: "1px solid var(--border-default)", borderRadius: "6px", height: "40px" }}
-          />
+          <label style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)", display: "block", marginBottom: "4px" }}>CALENDAR PRESETS</label>
+          <select
+            value={presetRange}
+            onChange={(e) => handlePresetRangeChange(e.target.value)}
+            style={{ width: "100%", padding: "8px 12px", border: "1px solid var(--border-default)", borderRadius: "6px", background: "white", height: "40px", fontSize: "14px", fontWeight: "500" }}
+          >
+            <option value="all">📅 All Time</option>
+            <option value="today">☀️ Today</option>
+            <option value="yesterday">🌙 Yesterday</option>
+            <option value="this_month">📅 This Month</option>
+            <option value="last_month">📅 Last Month</option>
+            <option value="custom">⚙️ Custom Range</option>
+          </select>
         </div>
-        <div style={{ flex: "1 1 150px" }}>
-          <label style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)", display: "block", marginBottom: "4px" }}>END DATE</label>
-          <input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            style={{ width: "100%", padding: "8px 12px", border: "1px solid var(--border-default)", borderRadius: "6px", height: "40px" }}
-          />
-        </div>
+
+        {/* Date Range manual inputs - only displayed or active for custom dates */}
+        {(presetRange === "custom" || startDate || endDate) && (
+          <>
+            <div style={{ flex: "1 1 130px" }}>
+              <label style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)", display: "block", marginBottom: "4px" }}>START DATE</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                style={{ width: "100%", padding: "8px 12px", border: "1px solid var(--border-default)", borderRadius: "6px", height: "40px" }}
+              />
+            </div>
+            <div style={{ flex: "1 1 130px" }}>
+              <label style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)", display: "block", marginBottom: "4px" }}>END DATE</label>
+              <input
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                style={{ width: "100%", padding: "8px 12px", border: "1px solid var(--border-default)", borderRadius: "6px", height: "40px" }}
+              />
+            </div>
+          </>
+        )}
 
         <div>
           <label style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)", display: "block", marginBottom: "4px" }}>PLATFORM STORE</label>
           <select
             value={platform}
             onChange={(e) => setPlatform(e.target.value)}
-            style={{ padding: "8px 12px", border: "1px solid var(--border-default)", borderRadius: "6px", background: "white", height: "40px", width: "150px" }}
+            style={{ padding: "8px 12px", border: "1px solid var(--border-default)", borderRadius: "6px", background: "white", height: "40px", width: "140px" }}
           >
             <option value="">All Stores</option>
             <option value="woo">WooCommerce</option>
@@ -316,11 +400,11 @@ export default function OrdersPage() {
         </div>
 
         <div>
-          <label style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)", display: "block", marginBottom: "4px" }}>SHIPPING LOGISTICS</label>
+          <label style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)", display: "block", marginBottom: "4px" }}>SHIPPING STATUS</label>
           <select
             value={shippingStatus}
             onChange={(e) => setShippingStatus(e.target.value)}
-            style={{ padding: "8px 12px", border: "1px solid var(--border-default)", borderRadius: "6px", background: "white", height: "40px", width: "160px" }}
+            style={{ padding: "8px 12px", border: "1px solid var(--border-default)", borderRadius: "6px", background: "white", height: "40px", width: "140px" }}
           >
             <option value="">All Statuses</option>
             <option value="placed">Placed</option>
@@ -336,7 +420,7 @@ export default function OrdersPage() {
             className="btn btn-primary"
             style={{ height: "40px", padding: "0 20px", display: "inline-flex", alignItems: "center", gap: "6px" }}
           >
-            🔍 Filter
+            🔍 Search
           </button>
         </div>
       </div>
@@ -350,7 +434,7 @@ export default function OrdersPage() {
       ) : groupedOrders.length === 0 ? (
         <div style={{ padding: "80px 0", textAlign: "center", border: "1px dashed var(--border-default)", borderRadius: "10px", flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center" }}>
           <p style={{ color: "var(--text-secondary)", margin: 0, fontSize: "16px", fontWeight: "500" }}>No logistics order rows found matching criteria.</p>
-          <p style={{ color: "var(--text-muted)", margin: "6px 0 20px 0", fontSize: "13px" }}>Check your date filters or import new sales logs.</p>
+          <p style={{ color: "var(--text-muted)", margin: "6px 0 20px 0", fontSize: "13px" }}>Check your category search or calendar range.</p>
           <Link href="/oms/sync" className="btn btn-secondary" style={{ textDecoration: "none" }}>Trigger Store Sync</Link>
         </div>
       ) : (
@@ -400,7 +484,6 @@ export default function OrdersPage() {
                   ? { bg: "#FEE2E2", text: "#991B1B" } 
                   : { bg: "#FEF3C7", text: "#92400E" };
 
-                // Get count of line items in this order
                 const itemsCount = order.items.length;
 
                 return (
@@ -428,8 +511,6 @@ export default function OrdersPage() {
                     </td>
                     {/* Email */}
                     <td style={{ padding: "12px", fontSize: "12px", color: "var(--text-secondary)", verticalAlign: "middle" }}>{order.customer_email}</td>
-                    
-                    {/* STACKED LINE ITEMS COLUMNS */}
                     
                     {/* Product Name */}
                     <td style={{ padding: "12px", verticalAlign: "middle" }}>
@@ -540,7 +621,7 @@ export default function OrdersPage() {
                       </div>
                     </td>
                     
-                    {/* Revenue (Single cell value for whole order) */}
+                    {/* Revenue */}
                     <td style={{ padding: "12px", textAlign: "right", fontWeight: "bold", color: "var(--text-primary)", verticalAlign: "middle", fontSize: "14px" }}>
                       ${order.revenue.toFixed(2)}
                     </td>

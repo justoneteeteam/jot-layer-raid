@@ -49,6 +49,7 @@ def get_orders(
     platform: Optional[str] = None,
     shipping_status: Optional[str] = None,
     search: Optional[str] = None,
+    search_field: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     db: Session = Depends(get_db)
@@ -70,12 +71,23 @@ def get_orders(
         
     if search:
         search_filter = f"%{search}%"
-        query = query.filter(
-            (Order.customer_name.like(search_filter)) |
-            (Order.order_id.like(search_filter)) |
-            (Order.customer_email.like(search_filter)) |
-            (Order.product_name.like(search_filter))
-        )
+        sf = search_field.lower() if search_field else "all"
+        
+        if sf == "order_id":
+            query = query.filter(Order.order_id.like(search_filter))
+        elif sf == "customer_name":
+            query = query.filter(Order.customer_name.like(search_filter))
+        elif sf == "customer_email":
+            query = query.filter(Order.customer_email.like(search_filter))
+        elif sf == "product_name":
+            query = query.filter(Order.product_name.like(search_filter))
+        else:
+            query = query.filter(
+                (Order.customer_name.like(search_filter)) |
+                (Order.order_id.like(search_filter)) |
+                (Order.customer_email.like(search_filter)) |
+                (Order.product_name.like(search_filter))
+            )
 
     if start_date:
         from datetime import date
