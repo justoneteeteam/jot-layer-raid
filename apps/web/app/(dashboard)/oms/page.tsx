@@ -66,6 +66,120 @@ export default function OrdersPage() {
   const [exporting, setExporting] = useState(false);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
 
+  // Order details modal states
+  const [activeDetailOrder, setActiveDetailOrder] = useState<GroupedOrder | null>(null);
+  const [customerProfile, setCustomerProfile] = useState<any>(null);
+  const [loadingProfile, setLoadingProfile] = useState(false);
+  const [savingOrder, setSavingOrder] = useState(false);
+  
+  // Editable fields in modal
+  const [editOrderId, setEditOrderId] = useState("");
+  const [editTrackingNumber, setEditTrackingNumber] = useState("");
+  const [editShippingStatus, setEditShippingStatus] = useState("");
+  const [editEmailSent, setEditEmailSent] = useState(false);
+  const [editCustomerName, setEditCustomerName] = useState("");
+  const [editCustomerEmail, setEditCustomerEmail] = useState("");
+  const [editCustomerAddress, setEditCustomerAddress] = useState("");
+
+  // Quick reply state inside modal
+  const [quickReplyText, setQuickReplyText] = useState("");
+  const [replyStatus, setReplyStatus] = useState("resolved");
+  const [sendingReply, setSendingReply] = useState(false);
+
+  const loadCustomerProfile = async (email: string) => {
+    if (!email) return;
+    setLoadingProfile(true);
+    setCustomerProfile(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/oms/customers/${email}`);
+      if (res.ok) {
+        const data = await res.json();
+        setCustomerProfile(data);
+      }
+    } catch (err) {
+      console.error("Failed to load customer profile", err);
+    } finally {
+      setLoadingProfile(false);
+    }
+  };
+
+  const openOrderDetails = (order: GroupedOrder) => {
+    setActiveDetailOrder(order);
+    setEditOrderId(order.order_id);
+    setEditTrackingNumber(order.tracking_number || "");
+    setEditShippingStatus(order.shipping_status || "placed");
+    setEditEmailSent(order.email_sent || false);
+    setEditCustomerName(order.customer_name || "");
+    setEditCustomerEmail(order.customer_email || "");
+    setEditCustomerAddress(order.customer_address || "");
+    
+    // Reset quick reply inputs
+    setQuickReplyText("");
+    setReplyStatus("resolved");
+
+    loadCustomerProfile(order.customer_email);
+  };
+
+  const handleSaveOrderDetails = async () => {
+    if (!activeDetailOrder) return;
+    setSavingOrder(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/oms/orders/${activeDetailOrder.order_id}/update`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          order_id: editOrderId,
+          tracking_number: editTrackingNumber,
+          shipping_status: editShippingStatus,
+          email_sent: editEmailSent,
+          customer_name: editCustomerName,
+          customer_email: editCustomerEmail,
+          customer_address: editCustomerAddress,
+        }),
+      });
+      if (res.ok) {
+        setActiveDetailOrder(null);
+        loadOrders();
+      } else {
+        alert("Failed to save order details.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Network error updating order.");
+    } finally {
+      setSavingOrder(false);
+    }
+  };
+
+  const handleSendQuickReply = async (ticketId: number) => {
+    if (!quickReplyText.trim()) return;
+    setSendingReply(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/oms/tickets/${ticketId}/reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message: quickReplyText,
+          status: replyStatus,
+        }),
+      });
+      if (res.ok) {
+        setQuickReplyText("");
+        setEditEmailSent(true); // Flag email as sent in UI
+        if (activeDetailOrder) {
+          loadCustomerProfile(activeDetailOrder.customer_email);
+        }
+      } else {
+        alert("Failed to send support reply.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error sending reply.");
+    } finally {
+      setSendingReply(false);
+    }
+  };
+
   // Group raw orders by order_id
   const getGroupedOrders = (): GroupedOrder[] => {
     const groups: { [key: string]: GroupedOrder } = {};
@@ -487,8 +601,17 @@ export default function OrdersPage() {
                 const itemsCount = order.items.length;
 
                 return (
-                  <tr key={order.order_id} style={{ borderBottom: "1px solid var(--border-default)", background: isSelected ? "var(--bg-tertiary)" : "white" }}>
-                    <td style={{ padding: "12px", textAlign: "center", verticalAlign: "middle" }}>
+                  <tr 
+                    key={order.order_id} 
+                    onClick={() => openOrderDetails(order)}
+                    style={{ 
+                      borderBottom: "1px solid var(--border-default)", 
+                      background: isSelected ? "var(--bg-tertiary)" : "white",
+                      cursor: "pointer",
+                      transition: "background 0.2s"
+                    }}
+                  >
+                    <td style={{ padding: "12px", textAlign: "center", verticalAlign: "middle" }} onClick={(e) => e.stopPropagation()}>
                       <input
                         type="checkbox"
                         checked={isSelected}
@@ -693,6 +816,342 @@ export default function OrdersPage() {
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── Grouped Order Detail & Customer CRM Modal ── */}
+      {activeDetailOrder !== null && (
+        <div 
+          className="upload-modal-overlay" 
+          onClick={() => setActiveDetailOrder(null)}
+          style={{ 
+            position: "fixed", 
+            top: 0, 
+            left: 0, 
+            right: 0, 
+            bottom: 0, 
+            background: "rgba(15, 23, 42, 0.6)", 
+            backdropFilter: "blur(4px)",
+            display: "flex", 
+            alignItems: "center", 
+            justifyContent: "center", 
+            zIndex: 1100 
+          }}
+        >
+          <div 
+            className="upload-modal" 
+            onClick={(e) => e.stopPropagation()} 
+            style={{ 
+              width: "90%", 
+              maxWidth: "1100px", 
+              height: "85vh", 
+              maxHeight: "800px",
+              display: "flex", 
+              flexDirection: "column",
+              borderRadius: "16px",
+              boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)"
+            }}
+          >
+            {/* Modal Header */}
+            <div className="upload-modal-header" style={{ padding: "16px 24px", borderBottom: "1px solid var(--border-default)" }}>
+              <div className="upload-modal-title" style={{ display: "flex", alignItems: "center", gap: "10px", fontSize: "18px", fontWeight: "bold" }}>
+                <span>📦 Order Logistics & CRM:</span>
+                <span style={{ color: "var(--accent)" }}>{activeDetailOrder.order_id}</span>
+                <span className="badge badge-info" style={{ fontSize: "11px", padding: "4px 8px" }}>
+                  {activeDetailOrder.store_id.replace(" WooCommerce", "").replace(" ShopBase", "")}
+                </span>
+              </div>
+              <button className="upload-modal-close" onClick={() => setActiveDetailOrder(null)} style={{ fontSize: "20px" }}>✕</button>
+            </div>
+
+            {/* Split View Body */}
+            <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+              {/* LEFT COLUMN: Logistics Inputs & Product details */}
+              <div style={{ flex: 1, padding: "24px", overflowY: "auto", borderRight: "1px solid var(--border-default)", display: "flex", flexDirection: "column", gap: "16px" }}>
+                
+                {/* Section 1: Customer Details */}
+                <div>
+                  <h3 style={{ fontSize: "13px", fontWeight: "bold", textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: "12px", letterSpacing: "0.5px" }}>
+                    👤 Customer Information
+                  </h3>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label" style={{ fontSize: "11px", fontWeight: "bold" }}>Customer Name</label>
+                      <input 
+                        className="input" 
+                        value={editCustomerName} 
+                        onChange={(e) => setEditCustomerName(e.target.value)} 
+                        style={{ height: "36px", fontSize: "13px" }}
+                      />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label" style={{ fontSize: "11px", fontWeight: "bold" }}>Customer Email</label>
+                      <input 
+                        className="input" 
+                        value={editCustomerEmail} 
+                        onChange={(e) => setEditCustomerEmail(e.target.value)} 
+                        style={{ height: "36px", fontSize: "13px" }}
+                      />
+                    </div>
+                  </div>
+                  <div className="form-group" style={{ marginTop: "12px", marginBottom: 0 }}>
+                    <label className="form-label" style={{ fontSize: "11px", fontWeight: "bold" }}>Shipping Address</label>
+                    <textarea 
+                      className="input" 
+                      value={editCustomerAddress} 
+                      onChange={(e) => setEditCustomerAddress(e.target.value)} 
+                      style={{ minHeight: "60px", padding: "8px", fontSize: "13px", resize: "none" }}
+                    />
+                  </div>
+                </div>
+
+                <hr style={{ border: 0, borderTop: "1px solid var(--border-default)", margin: "4px 0" }} />
+
+                {/* Section 2: Logistics Info */}
+                <div>
+                  <h3 style={{ fontSize: "13px", fontWeight: "bold", textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: "12px", letterSpacing: "0.5px" }}>
+                    🚚 Shipping & Fulfillment
+                  </h3>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label" style={{ fontSize: "11px", fontWeight: "bold" }}>Transaction / Order ID</label>
+                      <input 
+                        className="input" 
+                        value={editOrderId} 
+                        onChange={(e) => setEditOrderId(e.target.value)} 
+                        style={{ height: "36px", fontSize: "13px" }}
+                      />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label" style={{ fontSize: "11px", fontWeight: "bold" }}>Tracking Number</label>
+                      <input 
+                        className="input" 
+                        placeholder="Awaiting carrier number..."
+                        value={editTrackingNumber} 
+                        onChange={(e) => setEditTrackingNumber(e.target.value)} 
+                        style={{ height: "36px", fontSize: "13px" }}
+                      />
+                    </div>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginTop: "12px" }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label className="form-label" style={{ fontSize: "11px", fontWeight: "bold" }}>Logistics Status</label>
+                      <select 
+                        className="input" 
+                        value={editShippingStatus} 
+                        onChange={(e) => setEditShippingStatus(e.target.value)}
+                        style={{ height: "36px", fontSize: "13px", background: "white" }}
+                      >
+                        <option value="placed">Placed</option>
+                        <option value="in transit">In Transit</option>
+                        <option value="delivered">Delivered</option>
+                        <option value="incident">Incident</option>
+                      </select>
+                    </div>
+
+                    <div className="form-group" style={{ margin: 0, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+                      <label className="form-label" style={{ fontSize: "11px", fontWeight: "bold", marginBottom: "6px" }}>Email Sent Status</label>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <input 
+                          type="checkbox" 
+                          id="editEmailSent"
+                          checked={editEmailSent} 
+                          onChange={(e) => setEditEmailSent(e.target.checked)}
+                          style={{ width: "18px", height: "18px", cursor: "pointer" }}
+                        />
+                        <label htmlFor="editEmailSent" style={{ fontSize: "13px", color: "var(--text-primary)", cursor: "pointer", fontWeight: "500" }}>
+                          {editEmailSent ? "✔️ Logistics email sent" : "❌ Awaiting CRM reply"}
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <hr style={{ border: 0, borderTop: "1px solid var(--border-default)", margin: "4px 0" }} />
+
+                {/* Section 3: Ordered Products */}
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: "150px" }}>
+                  <h3 style={{ fontSize: "13px", fontWeight: "bold", textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: "8px", letterSpacing: "0.5px" }}>
+                    🎽 Ordered Products details
+                  </h3>
+                  <div style={{ flex: 1, overflowY: "auto", background: "var(--bg-secondary)", borderRadius: "8px", border: "1px solid var(--border-default)", padding: "10px" }}>
+                    {activeDetailOrder.items.map((item, idx) => (
+                      <div 
+                        key={item.id} 
+                        style={{ 
+                          display: "flex", 
+                          gap: "12px", 
+                          padding: "10px 0", 
+                          borderBottom: idx < activeDetailOrder.items.length - 1 ? "1px solid var(--border-default)" : "none",
+                          alignItems: "center"
+                        }}
+                      >
+                        {item.product_image ? (
+                          <img 
+                            src={item.product_image} 
+                            alt="" 
+                            style={{ width: "42px", height: "42px", borderRadius: "6px", objectFit: "cover", border: "1px solid var(--border-default)" }}
+                          />
+                        ) : (
+                          <div style={{ width: "42px", height: "42px", borderRadius: "6px", background: "var(--bg-tertiary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px" }}>🎽</div>
+                        )}
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: "13px", fontWeight: "bold", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={item.product_name}>
+                            {item.product_name}
+                          </div>
+                          <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "2px", display: "flex", gap: "8px" }}>
+                            <span>Size: <strong>{item.variant_value || "—"}</strong></span>
+                            {item.variant && <span>Options: <strong>{item.variant}</strong></span>}
+                          </div>
+                        </div>
+                        <div style={{ textAlign: "right", fontSize: "13px" }}>
+                          <div style={{ fontWeight: "bold", color: "var(--text-primary)" }}>x{item.quantity}</div>
+                          <div style={{ color: "var(--text-muted)", fontSize: "11px", marginTop: "2px" }}>${item.cost.toFixed(2)} cost</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+              </div>
+
+              {/* RIGHT COLUMN: Conversation logs */}
+              <div style={{ flex: 1.1, padding: "24px", background: "var(--bg-secondary)", display: "flex", flexDirection: "column" }}>
+                <h3 style={{ fontSize: "13px", fontWeight: "bold", textTransform: "uppercase", color: "var(--text-secondary)", marginBottom: "12px", letterSpacing: "0.5px" }}>
+                  💬 Freshdesk Email Conversation logs
+                </h3>
+
+                {loadingProfile ? (
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", color: "var(--text-secondary)" }}>
+                    <div className="spinner" style={{ width: "28px", height: "28px", border: "3px solid var(--border-default)", borderTopColor: "var(--accent)", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
+                    <p style={{ marginTop: "12px", fontSize: "13px" }}>Loading correspondence thread...</p>
+                  </div>
+                ) : !customerProfile || !customerProfile.tickets || customerProfile.tickets.length === 0 ? (
+                  <div style={{ flex: 1, border: "1px dashed var(--border-default)", borderRadius: "10px", background: "white", padding: "32px", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", textAlign: "center" }}>
+                    <span style={{ fontSize: "28px", marginBottom: "8px" }}>✉️</span>
+                    <p style={{ margin: 0, fontSize: "14px", fontWeight: "600", color: "var(--text-secondary)" }}>No support threads found.</p>
+                    <p style={{ margin: "4px 0 0 0", fontSize: "12px", color: "var(--text-muted)", maxWidth: "260px" }}>
+                      This customer ({activeDetailOrder.customer_email}) hasn't raised any Freshdesk email requests.
+                    </p>
+                  </div>
+                ) : (
+                  <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+                    {/* Message Feed */}
+                    <div style={{ flex: 1, overflowY: "auto", background: "white", borderRadius: "10px", border: "1px solid var(--border-default)", padding: "16px", display: "flex", flexDirection: "column", gap: "16px", marginBottom: "16px" }}>
+                      {customerProfile.tickets.map((ticket: any) => {
+                        let repliesArray: string[] = [];
+                        if (ticket.replies) {
+                          try {
+                            repliesArray = typeof ticket.replies === "string" ? JSON.parse(ticket.replies) : ticket.replies;
+                          } catch (e) {
+                            repliesArray = [];
+                          }
+                        }
+
+                        return (
+                          <div key={ticket.id} style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                            {/* Original Ticket Post */}
+                            <div style={{ alignSelf: "flex-start", background: "#f1f5f9", borderRadius: "12px 12px 12px 0px", padding: "12px 16px", maxWidth: "85%", border: "1px solid #e2e8f0" }}>
+                              <div style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)", display: "flex", justifyContent: "space-between", gap: "16px" }}>
+                                <span>📥 CUSTOMER INCOMING</span>
+                                <span>{ticket.status.toUpperCase()}</span>
+                              </div>
+                              <div style={{ fontWeight: "bold", fontSize: "13px", color: "var(--text-primary)", marginBottom: "6px" }}>
+                                {ticket.subject}
+                              </div>
+                              <div style={{ fontSize: "13px", color: "var(--text-primary)", whiteSpace: "pre-line" }}>
+                                {ticket.message}
+                              </div>
+                              <div style={{ fontSize: "9px", color: "var(--text-muted)", textAlign: "right", marginTop: "6px" }}>
+                                {new Date(ticket.created_at).toLocaleString()}
+                              </div>
+                            </div>
+
+                            {/* Replies */}
+                            {repliesArray.map((reply: string, rIdx: number) => (
+                              <div 
+                                key={rIdx} 
+                                style={{ 
+                                  alignSelf: "flex-end", 
+                                  background: "#e0f2fe", 
+                                  borderRadius: "12px 12px 0px 12px", 
+                                  padding: "12px 16px", 
+                                  maxWidth: "85%", 
+                                  border: "1px solid #bae6fd" 
+                                }}
+                              >
+                                <div style={{ fontSize: "11px", fontWeight: "bold", color: "#0369a1", marginBottom: "4px" }}>
+                                  📤 JOT CRM REPLY (AGENT)
+                                </div>
+                                <div style={{ fontSize: "13px", color: "#0369a1", whiteSpace: "pre-line" }}>
+                                  {reply}
+                                </div>
+                              </div>
+                            ))}
+
+                            {/* Quick Reply Form inside this ticket */}
+                            {ticket.status !== "resolved" && (
+                              <div style={{ borderTop: "1px solid #f1f5f9", paddingTop: "12px", marginTop: "4px" }}>
+                                <div style={{ display: "flex", gap: "8px" }}>
+                                  <textarea 
+                                    className="input" 
+                                    placeholder="Type e-mail response instantly..."
+                                    value={quickReplyText}
+                                    onChange={(e) => setQuickReplyText(e.target.value)}
+                                    style={{ flex: 1, minHeight: "50px", padding: "8px", fontSize: "12px", resize: "none", border: "1px solid #cbd5e1" }}
+                                  />
+                                  <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                                    <select 
+                                      className="input" 
+                                      value={replyStatus} 
+                                      onChange={(e) => setReplyStatus(e.target.value)}
+                                      style={{ height: "26px", padding: "2px 6px", fontSize: "11px", background: "white", width: "100px" }}
+                                    >
+                                      <option value="resolved">Resolved</option>
+                                      <option value="pending">Pending</option>
+                                      <option value="open">Open</option>
+                                    </select>
+                                    <button 
+                                      className="btn btn-primary"
+                                      disabled={sendingReply || !quickReplyText.trim()}
+                                      onClick={() => handleSendQuickReply(ticket.id)}
+                                      style={{ padding: "0 10px", height: "26px", fontSize: "11px", display: "flex", alignItems: "center", justifyContent: "center" }}
+                                    >
+                                      {sendingReply ? "..." : "Send"}
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="upload-modal-footer" style={{ padding: "16px 24px", borderTop: "1px solid var(--border-default)", background: "var(--bg-secondary)", borderRadius: "0 0 16px 16px" }}>
+              <button className="btn btn-secondary" onClick={() => setActiveDetailOrder(null)}>Cancel</button>
+              <button 
+                className="btn btn-primary" 
+                onClick={handleSaveOrderDetails}
+                disabled={savingOrder}
+                style={{ minWidth: "140px", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
+              >
+                {savingOrder ? (
+                  <>
+                    <span className="upload-spinner" /> Saving...
+                  </>
+                ) : (
+                  "💾 Save Logistics"
+                )}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

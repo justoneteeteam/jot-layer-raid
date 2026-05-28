@@ -36,8 +36,96 @@ WECHAT_DIRS = [
     r"C:\Users\Finelaptop.vn\Documents\WeChat Files\wxid_i5tyisy8lh9422\FileStorage\File\2025-07"
 ]
 
-# Automated CRM Email Keywords Rules
-AUTO_REPLY_KEYWORDS = ["shipping status", "tracking", "track", "status", "where is my order"]
+# Automated CRM Email Keywords Rules and Settings Store
+SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "email_settings.json")
+
+DEFAULT_EMAIL_SETTINGS = {
+    "sender_email": "customer@justonetee.org",
+    "keywords": "shipping status, tracking, track, status, where is my order",
+    "template_subject": "Instant AI Update regarding your order {order_id}",
+    "template_body": "Hi {customer_name},\n\n[Instant AI Update] This is an automated update regarding your order {order_id}.\nYour logistics shipping status is currently: {shipping_status}.\nTracking Number: {tracking_number}.\n\nYou can track your package directly on 17track here:\nhttps://www.17track.net/en/track?nums={tracking_number}\n\nThis response was triggered instantly by the JOT AI CRM rules engine.",
+    "auto_reply_enabled": True,
+    "cloudflare_account_id": "",
+    "cloudflare_api_token": ""
+}
+
+def load_email_settings():
+    if not os.path.exists(SETTINGS_FILE):
+        return DEFAULT_EMAIL_SETTINGS
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading email settings: {e}")
+        return DEFAULT_EMAIL_SETTINGS
+
+def persist_email_settings(settings):
+    try:
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(settings, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving email settings: {e}")
+
+def format_template(template_str, customer_name, order_id, shipping_status, tracking_number):
+    if not template_str:
+        return ""
+    return (template_str
+            .replace("{customer_name}", customer_name or "")
+            .replace("{order_id}", order_id or "")
+            .replace("{shipping_status}", (shipping_status or "").upper())
+            .replace("{tracking_number}", tracking_number or ""))
+
+def actual_send_email(to_email: str, subject: str, body_text: str):
+    """Send a real email using Cloudflare Email Sending Service REST API."""
+    settings = load_email_settings()
+    account_id = settings.get("cloudflare_account_id")
+    api_token = settings.get("cloudflare_api_token")
+    sender = settings.get("sender_email", "customer@justonetee.org")
+    
+    if not account_id or not api_token:
+        logger.warning("Cloudflare Email credentials not fully configured in Settings. Simulating delivery...")
+        return True
+        
+    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/email/sending/send"
+    headers = {
+        "Authorization": f"Bearer {api_token}",
+        "Content-Type": "application/json"
+    }
+    
+    html_body = f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
+        <div style="border-bottom: 1px solid #f1f5f9; padding-bottom: 16px; margin-bottom: 20px;">
+            <h2 style="color: #f97316; margin: 0; font-size: 20px; font-weight: bold;">JOT Support Logistics</h2>
+        </div>
+        <div style="color: #334155; font-size: 15px; line-height: 1.6; white-space: pre-line;">
+            {body_text}
+        </div>
+        <div style="border-top: 1px solid #f1f5f9; padding-top: 16px; margin-top: 24px; text-align: center; color: #94a3b8; font-size: 12px;">
+            This email was sent automatically from the JOT Logistics Dashboard.
+        </div>
+    </div>
+    """
+    
+    payload = {
+        "to": to_email,
+        "from": sender,
+        "subject": subject,
+        "text": body_text,
+        "html": html_body
+    }
+    
+    try:
+        response = httpx.post(url, headers=headers, json=payload, timeout=10.0)
+        response_json = response.json()
+        if response.status_code == 200 and response_json.get("success"):
+            logger.info(f"Cloudflare Email successfully sent to {to_email}. Result: {response_json.get('result')}")
+            return True
+        else:
+            logger.error(f"Cloudflare Email API error sending to {to_email}. Status: {response.status_code}, Response: {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"Exception sending Cloudflare email to {to_email}: {e}")
+        return False
 
 
 # ==========================================
@@ -450,12 +538,21 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
             }
         ]
         
+        email_settings = load_email_settings()
+        enabled = email_settings.get("auto_reply_enabled", True)
+        keywords_str = email_settings.get("keywords", "shipping status, tracking, track, status, where is my order")
+        keywords_list = [kw.strip().lower() for kw in keywords_str.split(",") if kw.strip()]
+        template_body = email_settings.get("template_body", "")
+
         for mock_t in mock_tickets:
             # Check keywords auto-reply rules
             message_lower = mock_t["message"].lower()
             subject_lower = mock_t["subject"].lower()
             
-            matched = any(kw in message_lower or kw in subject_lower for kw in AUTO_REPLY_KEYWORDS)
+            matched = False
+            if enabled:
+                matched = any(kw in message_lower or kw in subject_lower for kw in keywords_list)
+                
             replies_list = []
             status_val = mock_t["status"]
             
@@ -466,17 +563,19 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
                     order_id_val = customer_order.order_id
                     ship_status_val = customer_order.shipping_status
                     
-                    auto_reply_message = (
-                        f"Hi {mock_t['customer_name']},\n\n"
-                        f"[Instant AI Update] This is an automated update regarding your order {order_id_val}.\n"
-                        f"Your logistics shipping status is currently: {ship_status_val.upper()}.\n"
-                        f"Tracking Number: {tracking_str}.\n\n"
-                        f"You can track your package directly on 17track here: "
-                        f"https://www.17track.net/en/track?nums={customer_order.tracking_number or ''}\n\n"
-                        f"This response was triggered instantly by the JOT AI CRM rules engine."
+                    auto_reply_message = format_template(
+                        template_body,
+                        customer_name=mock_t["customer_name"],
+                        order_id=order_id_val,
+                        shipping_status=ship_status_val,
+                        tracking_number=tracking_str
                     )
                     replies_list.append(auto_reply_message)
                     status_val = "resolved"
+                    
+                    # Send live email notification via Cloudflare REST API
+                    subject_str = email_settings.get("template_subject", "Logistics update regarding your order {order_id}").replace("{order_id}", order_id_val or "")
+                    actual_send_email(mock_t["customer_email"], subject_str, auto_reply_message)
                     
             new_ticket = Ticket(
                 customer_name=mock_t["customer_name"],
@@ -884,9 +983,76 @@ def reply_to_ticket(ticket_id: int, reply: dict, db: Session = Depends(get_db)):
         replies_list.append(reply_msg)
         ticket.replies = json.dumps(replies_list)
         
+        # Deliver live email via Cloudflare REST API
+        subject_line = f"Re: {ticket.subject}" if ticket.subject else "Update regarding your JOT Support ticket"
+        actual_send_email(ticket.customer_email, subject_line, reply_msg)
+        
     orders = db.query(Order).filter(Order.customer_email == ticket.customer_email).all()
     for order in orders:
         order.email_sent = True
         
     db.commit()
     return {"status": "ok", "message": f"Reply successfully sent to {ticket.customer_email} and status updated to {status}."}
+
+
+# ==========================================
+# 7. EMAIL SETTINGS & ORDER UPDATE ENDPOINTS
+# ==========================================
+
+@router.get("/settings/email")
+def get_email_settings():
+    """Retrieve the CRM email auto-reply configuration."""
+    return load_email_settings()
+
+
+@router.post("/settings/email")
+def save_email_settings_api(settings_data: dict):
+    """Save the CRM email auto-reply configuration."""
+    required_keys = [
+        "sender_email", "keywords", "template_subject", "template_body", 
+        "auto_reply_enabled", "cloudflare_account_id", "cloudflare_api_token"
+    ]
+    for key in required_keys:
+        if key not in settings_data:
+            settings_data[key] = DEFAULT_EMAIL_SETTINGS[key]
+    persist_email_settings(settings_data)
+    return {"status": "ok", "message": "Email settings successfully saved."}
+
+
+@router.put("/orders/{order_id}/update")
+def update_order_details(order_id: str, data: dict, db: Session = Depends(get_db)):
+    """Update logistics details for all line items under a specific grouped order_id."""
+    orders = db.query(Order).filter(Order.order_id == order_id).all()
+    if not orders:
+        raise HTTPException(status_code=404, detail=f"No orders found with ID: {order_id}")
+        
+    # Check if we should update fields
+    tracking_number = data.get("tracking_number")
+    shipping_status = data.get("shipping_status")
+    email_sent = data.get("email_sent")
+    new_order_id = data.get("order_id")
+    customer_name = data.get("customer_name")
+    customer_address = data.get("customer_address")
+    customer_email = data.get("customer_email")
+    
+    for order in orders:
+        if tracking_number is not None:
+            order.tracking_number = tracking_number
+        if shipping_status is not None:
+            order.shipping_status = shipping_status.lower()
+        if email_sent is not None:
+            order.email_sent = bool(email_sent)
+        if customer_name is not None:
+            order.customer_name = customer_name
+        if customer_address is not None:
+            order.customer_address = customer_address
+        if customer_email is not None:
+            order.customer_email = customer_email
+            
+    # If the user renamed the order_id itself, perform this rename after updating other fields
+    if new_order_id is not None and new_order_id != order_id:
+        for order in orders:
+            order.order_id = new_order_id
+            
+    db.commit()
+    return {"status": "ok", "message": f"Successfully updated details for order {order_id}."}
