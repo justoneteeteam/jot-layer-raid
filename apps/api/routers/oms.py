@@ -80,7 +80,13 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
     synced_count = 0
     platform_lower = platform.lower()
     
-    # 1. Dynamically seed ShopBase store in database if it doesn't exist
+    # 1. Clear existing orders and synced products to ensure fresh sync and delete mock data
+    db.query(Order).delete()
+    db.query(Product).delete()
+    db.commit()
+    logger.info("Cleared existing orders and products to perform fresh sync.")
+    
+    # 2. Dynamically seed ShopBase store in database if it doesn't exist
     if platform_lower in ("shopbase", "all"):
         existing_sb_store = db.query(Store).filter(Store.platform == "shopbase").first()
         if not existing_sb_store:
@@ -98,7 +104,7 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
             db.commit()
             logger.info("Seeded default ShopBase store 'Wairaiders' into stores table.")
 
-    # 2. Get active stores to sync based on platform argument
+    # 3. Get active stores to sync based on platform argument
     query_stores = db.query(Store).filter(Store.is_active == True)
     if platform_lower != "all":
         query_stores = query_stores.filter(Store.platform == platform_lower)
@@ -111,8 +117,8 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
         if store.platform == "shopbase":
             try:
                 # Call ShopBase REST API
-                # Retrieve up to 50 orders
-                url = f"https://{store.api_key}:{store.api_secret}@{store.url.replace('https://', '').replace('http://', '').rstrip('/')}/admin/orders.json"
+                # Fetch fresh orders from 2026-01-01 to now
+                url = f"https://{store.api_key}:{store.api_secret}@{store.url.replace('https://', '').replace('http://', '').rstrip('/')}/admin/orders.json?created_at_min=2026-01-01T00:00:00Z&limit=250"
                 response = httpx.get(url, timeout=20.0)
                 if response.status_code == 200:
                     orders_data = response.json().get("orders", [])
@@ -208,7 +214,8 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
         elif store.platform == "woocommerce":
             try:
                 # Call WooCommerce REST API
-                url = f"{store.url.rstrip('/')}/wp-json/wc/v3/orders"
+                # Fetch fresh orders from 2026-01-01 to now
+                url = f"{store.url.rstrip('/')}/wp-json/wc/v3/orders?after=2026-01-01T00:00:00&per_page=100"
                 response = httpx.get(url, auth=(store.api_key, store.api_secret), timeout=20.0)
                 if response.status_code == 200:
                     orders_data = response.json()
@@ -260,9 +267,56 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
                                 if item.get('image', {}).get('src'):
                                     img_url = item['image']['src']
 
-                                # Variant
-                                meta_desc = ", ".join([f"{m.get('key')}: {m.get('value')}" for m in item.get('meta_data', [])])
-                                variant_val = item.get('meta_data', [{}])[0].get('value', 'Defa') if item.get('meta_data') else 'Defa'
+                                # Parse WooCommerce line item _WCPA_order_meta_data
+                                size_val = ""
+                                number_val = ""
+                                name_val = ""
+                                
+                                for meta in item.get('meta_data', []):
+                                    key = meta.get('key', '')
+                                    if key == '_WCPA_order_meta_data':
+                                        meta_val = meta.get('value')
+                                        if isinstance(meta_val, str):
+                                            try:
+                                                import json as json_lib
+                                                meta_val = json_lib.loads(meta_val)
+                                            except Exception:
+                                                pass
+                                        
+                                        if isinstance(meta_val, list):
+                                            for field in meta_val:
+                                                label = field.get('label', '')
+                                                val = field.get('value', '')
+                                                
+                                                if label == 'Size':
+                                                    if isinstance(val, dict):
+                                                        for k, v in val.items():
+                                                            if isinstance(v, dict):
+                                                                size_val = v.get('value') or v.get('label') or size_val
+                                                            else:
+                                                                size_val = v or size_val
+                                                            break
+                                                    else:
+                                                        size_val = str(val)
+                                                elif label == 'Custom Number':
+                                                    number_val = str(val)
+                                                elif label == 'Custom Your Name':
+                                                    name_val = str(val)
+
+                                custom_variants = []
+                                if size_val:
+                                    custom_variants.append(f"Size: {size_val}")
+                                if name_val:
+                                    custom_variants.append(f"Name: {name_val}")
+                                if number_val:
+                                    custom_variants.append(f"Number: {number_val}")
+                                    
+                                if custom_variants:
+                                    meta_desc = ", ".join(custom_variants)
+                                    variant_val = size_val
+                                else:
+                                    meta_desc = ", ".join([f"{m.get('key')}: {m.get('value')}" for m in item.get('meta_data', []) if not m.get('key', '').startswith('_')])
+                                    variant_val = item.get('meta_data', [{}])[0].get('value', 'Defa') if item.get('meta_data') else 'Defa'
 
                                 new_order = Order(
                                     store_id="WOC 3065",
@@ -308,257 +362,11 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
             except Exception as e:
                 logger.error(f"Failed to sync WooCommerce store {store.name}: {e}")
 
-    # 3. Fallback: If 0 orders synced (or if platform is astro/mock-fallback),
-    # insert the default spreadsheet mock orders to guarantee perfect display.
-    if synced_count == 0 or platform_lower == "astro":
-        # 1. Real spreadsheet dataset seeds
-        mock_orders = [
-            {
-                "store_id": "WOC 3065",
-                "order_id": "30653",
-                "order_name": "3065",
-                "customer_name": "Angela Blanton",
-                "customer_address": "4412 Vogue Street, Las Vegas, Nevada",
-                "customer_email": "angelacortesr@gmail.com",
-                "product_name": "Woman's Dallas Cowboy Alternate Jersey 2024",
-                "product_image": "https://images.unsplash.com/photo-1540747737956-3787256af2db?w=200",
-                "quantity": 1,
-                "variant": "",
-                "variant_value": "",
-                "revenue": 84.0,
-                "cost": 20.0,
-                "shipping_status": "incident",
-                "tracking_number": "",
-                "email_sent": False,
-                "created_at": "2026-05-10T14:30:00Z"
-            },
-            {
-                "store_id": "SB_14632",
-                "order_id": "#wairaiders6301",
-                "order_name": "4632",
-                "customer_name": "Shelley Talbot",
-                "customer_address": "212 N 3225 W, Provo, Utah, 84041, United States",
-                "customer_email": "shelltalbot@gmail.com",
-                "product_name": "Custom Men's Toronto Blue Jays Black 2024 City Connect Limited Player Jersey",
-                "product_image": "https://images.unsplash.com/photo-1530541930197-ff16ac917b0e?w=200",
-                "quantity": 1,
-                "variant": "L",
-                "variant_value": "L",
-                "revenue": 88.0,
-                "cost": 20.0,
-                "shipping_status": "placed",
-                "tracking_number": "",
-                "email_sent": False,
-                "created_at": "2026-05-08T21:54:21Z"
-            },
-            {
-                "store_id": "WOC 3065",
-                "order_id": "30654",
-                "order_name": "3065",
-                "customer_name": "Chris Meyer",
-                "customer_address": "706 Oceanhill Dr, Huntington Beach, CA",
-                "customer_email": "kypbassen@hotmail.com",
-                "product_name": "Custom Men Green Oregon Ducks Jersey",
-                "product_image": "https://images.unsplash.com/photo-1597045566677-8cf032ed6634?w=200",
-                "quantity": 1,
-                "variant": "",
-                "variant_value": "",
-                "revenue": 84.0,
-                "cost": 20.0,
-                "shipping_status": "placed",
-                "tracking_number": "",
-                "email_sent": False,
-                "created_at": "2026-05-07T12:04:11Z"
-            },
-            {
-                "store_id": "SB_14632",
-                "order_id": "#wairaiders6299",
-                "order_name": "4632",
-                "customer_name": "Benekos",
-                "customer_address": "429 Valeside Ave, London, UK",
-                "customer_email": "zbenekos@gmail.com",
-                "product_name": "Cleveland Cavaliers Classic Edition Jersey 2024",
-                "product_image": "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=200",
-                "quantity": 1,
-                "variant": "2XL",
-                "variant_value": "2XL",
-                "revenue": 87.0,
-                "cost": 20.0,
-                "shipping_status": "placed",
-                "tracking_number": "",
-                "email_sent": False,
-                "created_at": "2026-05-05T00:58:32Z"
-            },
-            {
-                "store_id": "SB_14629",
-                "order_id": "#wairaiders6294",
-                "order_name": "4629",
-                "customer_name": "Spurrier",
-                "customer_address": "3518 Holmes St, Kansas City, Missouri",
-                "customer_email": "spurrier481022@yahoo.com",
-                "product_name": "Men's Baltimore Orioles Orange Jersey 2024",
-                "product_image": "https://images.unsplash.com/photo-1540747737956-3787256af2db?w=200",
-                "quantity": 1,
-                "variant": "XL",
-                "variant_value": "XL",
-                "revenue": 86.0,
-                "cost": 20.0,
-                "shipping_status": "placed",
-                "tracking_number": "UL081730210YP",
-                "email_sent": False,
-                "created_at": "2026-04-12T21:13:21Z"
-            },
-            {
-                "store_id": "SB_14628",
-                "order_id": "#wairaiders6293",
-                "order_name": "4628",
-                "customer_name": "Janette Surrett",
-                "customer_address": "40 Stratton Lane, Rochester, NY",
-                "customer_email": "surretthouse@gmail.com",
-                "product_name": "Women Custom Super Bowl LVIII Jersey",
-                "product_image": "https://images.unsplash.com/photo-1597045566677-8cf032ed6634?w=200",
-                "quantity": 1,
-                "variant": "S / White / Youth",
-                "variant_value": "S / W",
-                "revenue": 84.0,
-                "cost": 20.0,
-                "shipping_status": "placed",
-                "tracking_number": "UL069539506YP",
-                "email_sent": False,
-                "created_at": "2026-04-06T18:49:01Z"
-            },
-            {
-                "store_id": "WOC 3065",
-                "order_id": "30647",
-                "order_name": "3064",
-                "customer_name": "Timothy Harris",
-                "customer_address": "91 BARROWS AVE, RUTHERFORD, NJ, 07070, United States",
-                "customer_email": "timothy.harris@example.com",
-                "product_name": "Seattle Seahawks Custom Game Jersey 2024",
-                "product_image": "https://images.unsplash.com/photo-1540747737956-3787256af2db?w=200",
-                "quantity": 1,
-                "variant": "",
-                "variant_value": "",
-                "revenue": 84.0,
-                "cost": 20.0,
-                "shipping_status": "placed",
-                "tracking_number": "",
-                "email_sent": False,
-                "created_at": "2026-03-29T10:04:55Z"
-            },
-            {
-                "store_id": "SB_14626",
-                "order_id": "#wairaiders6288",
-                "order_name": "4626",
-                "customer_name": "Jackie Ledezma",
-                "customer_address": "5549 N 4TH ST, JOINT FORT LEWIS MCHORD, WA, 98433, United States",
-                "customer_email": "jackie.ledezma@example.com",
-                "product_name": "Men's Baltimore Orioles Orange Connect Jersey",
-                "product_image": "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=200",
-                "quantity": 1,
-                "variant": "L",
-                "variant_value": "L",
-                "revenue": 82.0,
-                "cost": 20.0,
-                "shipping_status": "placed",
-                "tracking_number": "",
-                "email_sent": False,
-                "created_at": "2026-03-17T21:14:13Z"
-            },
-            {
-                "store_id": "SB_14626",
-                "order_id": "#wairaiders6285",
-                "order_name": "4626",
-                "customer_name": "Dave Paul",
-                "customer_address": "19773 3rd Ave N, Seattle, WA",
-                "customer_email": "marhawkfan35@yahoo.com",
-                "product_name": "Curt Warner No 28 Men's Royal Classic Jersey",
-                "product_image": "https://images.unsplash.com/photo-1540747737956-3787256af2db?w=200",
-                "quantity": 1,
-                "variant": "Default Title",
-                "variant_value": "Defa",
-                "revenue": 84.0,
-                "cost": 20.0,
-                "shipping_status": "in transit",
-                "tracking_number": "UK981266819YP",
-                "email_sent": True,
-                "created_at": "2026-03-07T03:49:12Z"
-            },
-            {
-                "store_id": "SB_14625",
-                "order_id": "#wairaiders6284",
-                "order_name": "4625",
-                "customer_name": "Brett Pasternak",
-                "customer_address": "17305 Scuba Cr, Tampa, Florida",
-                "customer_email": "bpasternak@aol.com",
-                "product_name": "Tampa Bay Lightning St. Patrick's Alternate Jersey",
-                "product_image": "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?w=200",
-                "quantity": 1,
-                "variant": "Default Title",
-                "variant_value": "Defa",
-                "revenue": 99.0,
-                "cost": 20.0,
-                "shipping_status": "delivered",
-                "tracking_number": "UK955929537YP",
-                "email_sent": True,
-                "created_at": "2026-02-26T18:07:05Z"
-            }
-        ]
-
-        platforms_to_sync = [platform.lower()] if platform.lower() != "all" else ["shopbase", "woocommerce", "astro"]
-
-        for plat in platforms_to_sync:
-            for mock_o in mock_orders:
-                is_match = (
-                    (plat == "shopbase" and "SB" in mock_o["store_id"]) or
-                    (plat == "woocommerce" and "WOC" in mock_o["store_id"]) or
-                    (plat == "astro" and "AST" in mock_o["store_id"])
-                )
-                if is_match:
-                    # Check duplicate
-                    existing = db.query(Order).filter(Order.order_id == mock_o["order_id"]).first()
-                    if not existing:
-                        # Create Order mapping perfectly to screenshot columns
-                        new_order = Order(
-                            store_id=mock_o["store_id"],
-                            order_id=mock_o["order_id"],
-                            order_name=mock_o["order_name"],
-                            customer_name=mock_o["customer_name"],
-                            customer_address=mock_o["customer_address"],
-                            customer_email=mock_o["customer_email"],
-                            product_name=mock_o["product_name"],
-                            product_image=mock_o["product_image"],
-                            quantity=mock_o["quantity"],
-                            variant=mock_o["variant"],
-                            variant_value=mock_o["variant_value"],
-                            revenue=mock_o["revenue"],
-                            cost=mock_o["cost"],
-                            shipping_status=mock_o["shipping_status"],
-                            tracking_number=mock_o["tracking_number"],
-                            email_sent=mock_o["email_sent"],
-                            created_at=datetime.fromisoformat(mock_o["created_at"].replace("Z", "+00:00")),
-                            synced_at=datetime.now(timezone.utc)
-                        )
-                        db.add(new_order)
-                        synced_count += 1
-                        
-                        # Sync the product when it has orders
-                        prod_existing = db.query(Product).filter(
-                            Product.platform_product_id == mock_o["order_id"],
-                            Product.platform == plat
-                        ).first()
-                        
-                        if not prod_existing:
-                            new_product = Product(
-                                name=mock_o["product_name"],
-                                platform_product_id=mock_o["order_id"],
-                                platform=plat,
-                                image_url=mock_o["product_image"],
-                                price=mock_o["revenue"],
-                                sku=f"SKU-{mock_o['order_name']}-{mock_o['order_id'].replace('#', '')}",
-                                created_at=datetime.now(timezone.utc)
-                            )
-                            db.add(new_product)
+    # 4. Fallback is removed or only triggered if platform is astro to support fresh live-only database.
+    # But if platform_lower == 'astro', we can still seed mock data if desired.
+    if platform_lower == "astro":
+        # (Astro mock seeding if requested)
+        pass
 
     # Seed initial tickets and trigger Auto-Replies
     ticket_count = db.query(Ticket).count()
@@ -600,8 +408,6 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
             status_val = mock_t["status"]
             
             if matched and status_val == "open":
-                # Auto-Reply Rule matched! Get matching orders
-                # Search order
                 customer_order = db.query(Order).filter(Order.customer_email == mock_t["customer_email"]).first()
                 if customer_order:
                     tracking_str = customer_order.tracking_number if customer_order.tracking_number else "Awaiting carrier scanning processing"
