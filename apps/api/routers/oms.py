@@ -49,23 +49,49 @@ def get_orders(
     platform: Optional[str] = None,
     shipping_status: Optional[str] = None,
     search: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """Retrieve orders with filters aligned to spreadsheet."""
     query = db.query(Order)
     
     if platform:
-        query = query.filter(Order.store_id.like(f"%{platform}%"))
+        # Support case-insensitive loose store match
+        if platform.lower() == "woo":
+            query = query.filter(Order.store_id.like("%WooCommerce%"))
+        elif platform.lower() == "sb":
+            query = query.filter(Order.store_id.like("%ShopBase%"))
+        else:
+            query = query.filter(Order.store_id.like(f"%{platform}%"))
+            
     if shipping_status:
         query = query.filter(Order.shipping_status == shipping_status.lower())
+        
     if search:
         search_filter = f"%{search}%"
         query = query.filter(
             (Order.customer_name.like(search_filter)) |
             (Order.order_id.like(search_filter)) |
-            (Order.order_number.like(search_filter) if hasattr(Order, 'order_number') else Order.order_id.like(search_filter)) |
+            (Order.customer_email.like(search_filter)) |
             (Order.product_name.like(search_filter))
         )
+
+    if start_date:
+        from datetime import date
+        try:
+            start_d = date.fromisoformat(start_date)
+            query = query.filter(Order.created_at >= start_d)
+        except Exception:
+            pass
+
+    if end_date:
+        from datetime import date, timedelta
+        try:
+            end_d = date.fromisoformat(end_date) + timedelta(days=1)
+            query = query.filter(Order.created_at < end_d)
+        except Exception:
+            pass
         
     orders = query.order_by(Order.id.asc()).all()
     return orders
