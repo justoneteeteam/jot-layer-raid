@@ -80,11 +80,25 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
     synced_count = 0
     platform_lower = platform.lower()
     
-    # 1. Clear existing orders and synced products to ensure fresh sync and delete mock data
-    db.query(Order).delete()
-    db.query(Product).delete()
+    # 1. Targeted delete to clear old/mock data without wiping other active platform syncs
+    platforms_to_clear = [platform_lower] if platform_lower != "all" else ["shopbase", "woocommerce", "astro"]
+    
+    # Always delete mock orders
+    db.query(Order).filter(Order.store_id.in_(["WOC 3065", "SB_14632", "SB_14629", "SB_14628", "SB_14626", "SB_14625", "SB_14632"])).delete(synchronize_session=False)
+    
+    for plat in platforms_to_clear:
+        if plat == "shopbase":
+            db.query(Order).filter(Order.store_id.like("SB_%")).delete(synchronize_session=False)
+            db.query(Product).filter(Product.platform == "shopbase").delete(synchronize_session=False)
+        elif plat == "woocommerce":
+            db.query(Order).filter(Order.store_id.like("WOC%")).delete(synchronize_session=False)
+            db.query(Product).filter(Product.platform == "woocommerce").delete(synchronize_session=False)
+        elif plat == "astro":
+            db.query(Order).filter(Order.store_id.like("AST%")).delete(synchronize_session=False)
+            db.query(Product).filter(Product.platform == "astro").delete(synchronize_session=False)
+            
     db.commit()
-    logger.info("Cleared existing orders and products to perform fresh sync.")
+    logger.info(f"Cleared existing orders and products for {platforms_to_clear} to perform fresh sync.")
     
     # 2. Dynamically seed ShopBase store in database if it doesn't exist
     if platform_lower in ("shopbase", "all"):
