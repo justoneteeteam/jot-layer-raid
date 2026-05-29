@@ -1340,7 +1340,11 @@ def resend_order(order_id: str, db: Session = Depends(get_db)):
 
 @router.post("/webhook/woocommerce")
 @router.post("/webhooks/woocommerce/order-created")
-def woocommerce_order_created_webhook(payload: dict, db: Session = Depends(get_db)):
+def woocommerce_order_created_webhook(
+    payload: dict,
+    store: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
     """
     Real-Time webhook receiver for WooCommerce 'order.created' topic.
     Safely deduplicates, saves order rows, and dispatches the Cloudflare email.
@@ -1348,6 +1352,55 @@ def woocommerce_order_created_webhook(payload: dict, db: Session = Depends(get_d
     order_id = str(payload.get("id"))
     if not order_id:
         raise HTTPException(status_code=400, detail="Invalid webhook payload: Missing order ID.")
+
+    # 1. Identify which store triggered the webhook to apply dynamic branding
+    store_key = (store or "").lower()
+    
+    # Try to extract from self links in payload metadata
+    if not store_key:
+        self_links = payload.get("_links", {}).get("self", [])
+        if self_links and isinstance(self_links, list):
+            href = str(self_links[0].get("href", "")).lower()
+            if "wairaiders" in href:
+                store_key = "wairaiders"
+            elif "vulius" in href:
+                store_key = "vulius"
+        
+        # Fallback to checking collection links
+        if not store_key:
+            col_links = payload.get("_links", {}).get("collection", [])
+            if col_links and isinstance(col_links, list):
+                href = str(col_links[0].get("href", "")).lower()
+                if "wairaiders" in href:
+                    store_key = "wairaiders"
+                elif "vulius" in href:
+                    store_key = "vulius"
+
+    if store_key == "vulius":
+        resolved_store_id = "Vulius Store"
+        brand_name = "VULIUS"
+        # Dynamic Header using the official high-resolution logo image
+        header_html = """<!-- Premium Branded Logo Header -->
+                    <tr>
+                        <td style="background: #ffffff; padding: 32px; text-align: center; border-bottom: 2px solid #f1f5f9;">
+                            <img src="https://vulius.com/wp-content/uploads/2023/07/logo-vulius-01-1400x630.png" style="height: 55px; width: auto; max-width: 200px; display: inline-block; object-fit: contain;" alt="VULIUS Logo" />
+                            <p style="color: #64748b; margin: 8px 0 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em;">ORDER CONFIRMED</p>
+                        </td>
+                    </tr>"""
+        footer_brand_text = "VULIUS Store"
+    else:
+        # Default to WaiRaiders branding (handles both "wairaiders" and fallback/retrocompatibility)
+        resolved_store_id = "WaiRaiders Store"
+        brand_name = "WaiRaiders"
+        # Dynamic Header using premium styled text for WaiRaiders
+        header_html = """<!-- Premium Dark Gradient Header -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 40px 32px; text-align: center; border-bottom: 4px solid #f97316;">
+                            <h1 style="color: #ffffff; margin: 0 0 8px 0; font-size: 28px; font-weight: 800; letter-spacing: -0.05em; text-transform: uppercase;">WAIRAIDERS</h1>
+                            <p style="color: #94a3b8; margin: 0; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.1em;">ORDER CONFIRMED</p>
+                        </td>
+                    </tr>"""
+        footer_brand_text = "WaiRaiders Store"
 
     # 1. Deduplication Guard: Check if the order already exists in the database
     existing = db.query(Order).filter(Order.order_id == order_id).first()
@@ -1470,7 +1523,7 @@ def woocommerce_order_created_webhook(payload: dict, db: Session = Depends(get_d
         img_url = "https://images.unsplash.com/photo-1540747737956-3787256af2db?w=200"
         
         new_order = Order(
-            store_id="WaiRaiders Store",
+            store_id=resolved_store_id,
             order_id=order_id,
             order_name=str(payload.get("number") or order_id),
             customer_name=customer_name,
@@ -1541,13 +1594,7 @@ def woocommerce_order_created_webhook(payload: dict, db: Session = Depends(get_d
             <td align="center">
                 <table width="100%" style="max-width: 600px; background: #ffffff; border-radius: 20px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05); border-collapse: separate;" border="0" cellspacing="0" cellpadding="0">
                     
-                    <!-- Premium Branded Logo Header -->
-                    <tr>
-                        <td style="background: #ffffff; padding: 32px; text-align: center; border-bottom: 2px solid #f1f5f9;">
-                            <img src="https://vulius.com/wp-content/uploads/2023/07/logo-vulius-01-1400x630.png" style="height: 55px; width: auto; max-width: 200px; display: inline-block; object-fit: contain;" alt="VULIUS Logo" />
-                            <p style="color: #64748b; margin: 8px 0 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em;">ORDER CONFIRMED</p>
-                        </td>
-                    </tr>
+                    {header_html}
                     
                     <!-- Content Area -->
                     <tr>
@@ -1620,7 +1667,7 @@ def woocommerce_order_created_webhook(payload: dict, db: Session = Depends(get_d
                     <!-- Footer -->
                     <tr>
                         <td style="background: #f8fafc; border-top: 1px solid #e2e8f0; padding: 24px 32px; text-align: center; color: #94a3b8; font-size: 12px; font-weight: 500; line-height: 1.5;">
-                            <p style="margin: 0 0 4px 0;">This email was automatically generated and sent to you by <strong>VULIUS Store</strong>.</p>
+                            <p style="margin: 0 0 4px 0;">This email was automatically generated and sent to you by <strong>{footer_brand_text}</strong>.</p>
                             <p style="margin: 0;">If you have any questions, please reply directly to this support email.</p>
                         </td>
                     </tr>
