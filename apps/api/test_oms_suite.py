@@ -93,7 +93,7 @@ def run_test_suite():
             from openpyxl import load_workbook
             wb = load_workbook(file_path)
             ws = wb.active
-            headers = [ws.cell(row=1, column=col).value for col in range(1, 18)]
+            headers = [ws.cell(row=1, column=col).value for col in range(1, 10)]
             print("Spreadsheet Columns Verified:")
             print(" ", headers)
             wb.close()

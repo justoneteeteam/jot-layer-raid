@@ -776,11 +776,10 @@ def export_supplier_excel(ids: str = Query(..., description="Comma separated ord
     ws = wb.active
     ws.title = "Supplier Orders"
     
-    # Headers exactly matching screenshot:
+    # Revised headers matching instructions (removed: Store ID, Order Name, Email, Revenue, Cost, status, Tracking number, Email sent):
     headers = [
-        "Store ID", "Order ID", "Order Name", "Customer Name", "Customer Address", 
-        "Email", "Product Name", "Product Image", "Quantity", "Variant", 
-        "Variant Value", "Revenue", "Cost", "Created At", "status", "Tracking number", "Email sent"
+        "Order ID", "Customer Name", "Customer Address", "Product Name", 
+        "Product Image", "Quantity", "Variant", "Variant Value", "Created At"
     ]
     ws.append(headers)
     
@@ -803,25 +802,16 @@ def export_supplier_excel(ids: str = Query(..., description="Comma separated ord
         cell.border = thin_border
         cell.alignment = center_align
 
-    # Column widths
-    ws.column_dimensions['A'].width = 15  # Store ID
-    ws.column_dimensions['B'].width = 20  # Order ID
-    ws.column_dimensions['C'].width = 15  # Order Name
-    ws.column_dimensions['D'].width = 20  # Customer Name
-    ws.column_dimensions['E'].width = 35  # Customer Address
-    ws.column_dimensions['F'].width = 25  # Email
-    ws.column_dimensions['G'].width = 30  # Product Name
-    ws.column_dimensions['H'].width = 16  # Product Image Thumbnail
-    ws.column_dimensions['I'].width = 10  # Quantity
-    ws.column_dimensions['J'].width = 15  # Variant
-    ws.column_dimensions['K'].width = 15  # Variant Value
-    ws.column_dimensions['L'].width = 12  # Revenue
-    ws.column_dimensions['M'].width = 12  # Cost
-    ws.column_dimensions['N'].width = 20  # Created At
-    ws.column_dimensions['O'].width = 5   # gap
-    ws.column_dimensions['P'].width = 15  # status
-    ws.column_dimensions['Q'].width = 20  # Tracking number
-    ws.column_dimensions['R'].width = 12  # Email sent
+    # Column widths for the revised layout
+    ws.column_dimensions['A'].width = 20  # Order ID
+    ws.column_dimensions['B'].width = 20  # Customer Name
+    ws.column_dimensions['C'].width = 35  # Customer Address
+    ws.column_dimensions['D'].width = 30  # Product Name
+    ws.column_dimensions['E'].width = 16  # Product Image Thumbnail
+    ws.column_dimensions['F'].width = 10  # Quantity
+    ws.column_dimensions['G'].width = 15  # Variant
+    ws.column_dimensions['H'].width = 15  # Variant Value
+    ws.column_dimensions['I'].width = 20  # Created At
 
     # Add order rows
     temp_files = []
@@ -829,40 +819,54 @@ def export_supplier_excel(ids: str = Query(..., description="Comma separated ord
     for idx, order in enumerate(orders, 2):
         ws.row_dimensions[idx].height = 85  # Height for images
         
-        ws.cell(row=idx, column=1, value=order.store_id).alignment = center_align
-        ws.cell(row=idx, column=2, value=order.order_id).alignment = center_align
-        ws.cell(row=idx, column=3, value=order.order_name).alignment = center_align
-        ws.cell(row=idx, column=4, value=order.customer_name).alignment = center_align
-        ws.cell(row=idx, column=5, value=order.customer_address).alignment = left_align
-        ws.cell(row=idx, column=6, value=order.customer_email).alignment = left_align
-        ws.cell(row=idx, column=7, value=order.product_name).alignment = left_align
+        # Shorten store name to first letter (e.g. Vulius -> V), and strip '#' from order ID
+        store_letter = order.store_id[0].upper() if order.store_id else ""
+        raw_order_id = order.order_id.replace("#", "").strip() if order.order_id else ""
+        formatted_order_id = f"{store_letter}{raw_order_id}"
         
-        # Cell H is for the embedded Product Image thumbnail
-        ws.cell(row=idx, column=8, value="").alignment = center_align
+        ws.cell(row=idx, column=1, value=formatted_order_id).alignment = center_align
+        ws.cell(row=idx, column=2, value=order.customer_name).alignment = center_align
+        ws.cell(row=idx, column=3, value=order.customer_address).alignment = left_align
+        ws.cell(row=idx, column=4, value=order.product_name).alignment = left_align
         
-        ws.cell(row=idx, column=9, value=order.quantity).alignment = center_align
-        ws.cell(row=idx, column=10, value=order.variant or "").alignment = center_align
-        ws.cell(row=idx, column=11, value=order.variant_value or "").alignment = center_align
-        ws.cell(row=idx, column=12, value=order.revenue).alignment = center_align
-        ws.cell(row=idx, column=13, value=order.cost).alignment = center_align
+        # Cell E is for the embedded Product Image thumbnail
+        ws.cell(row=idx, column=5, value="").alignment = center_align
+        
+        ws.cell(row=idx, column=6, value=order.quantity).alignment = center_align
+        ws.cell(row=idx, column=7, value=order.variant or "").alignment = center_align
+        
+        # Extract Sex from product title (Men, Women, Youth). 
+        # If product title does not include that, set the Sex portion as blank.
+        product_title_lower = order.product_name.lower() if order.product_name else ""
+        sex_extracted = ""
+        if "women" in product_title_lower:
+            sex_extracted = "Women"
+        elif "men" in product_title_lower:
+            sex_extracted = "Men"
+        elif "youth" in product_title_lower:
+            sex_extracted = "Youth"
+        elif "kids" in product_title_lower or "kid" in product_title_lower:
+            sex_extracted = "Youth"
+            
+        size_val = (order.variant_value or "").strip()
+        
+        if sex_extracted:
+            variant_val_final = f"{size_val} {sex_extracted}".strip()
+        else:
+            variant_val_final = size_val
+            
+        ws.cell(row=idx, column=8, value=variant_val_final).alignment = center_align
         
         created_str = order.created_at.strftime("%Y-%m-%dT%H:%M:%S") if order.created_at else ""
-        ws.cell(row=idx, column=14, value=created_str).alignment = center_align
+        ws.cell(row=idx, column=9, value=created_str).alignment = center_align
         
-        ws.cell(row=idx, column=15, value="").alignment = center_align  # Gap
-        ws.cell(row=idx, column=16, value=order.shipping_status).alignment = center_align
-        ws.cell(row=idx, column=17, value=order.tracking_number or "").alignment = center_align
-        
-        email_sent_val = "Yes" if order.email_sent else "No"
-        ws.cell(row=idx, column=18, value=email_sent_val).alignment = center_align
-        
-        # Border styling for all data cells
-        for col_idx in range(1, 19):
+        # Border styling for all data cells (columns 1 to 9)
+        for col_idx in range(1, 10):
             cell = ws.cell(row=idx, column=col_idx)
             cell.border = thin_border
             cell.font = Font(name="Arial", size=10)
 
-        # Download and embed product image inside Column H (Product Image)
+        # Download and embed product image inside Column E (Product Image)
         if order.product_image:
             try:
                 response = httpx.get(order.product_image, timeout=5.0)
@@ -881,10 +885,10 @@ def export_supplier_excel(ids: str = Query(..., description="Comma separated ord
                     img_object = ExcelImage(tmp_path)
                     img_object.width = 75
                     img_object.height = 75
-                    ws.add_image(img_object, f"H{idx}")
+                    ws.add_image(img_object, f"E{idx}")
             except Exception as e:
                 logger.error(f"Failed to embed image for order {order.id}: {e}")
-                ws.cell(row=idx, column=8, value="[No Image]").alignment = center_align
+                ws.cell(row=idx, column=5, value="[No Image]").alignment = center_align
 
     # Save to temp file
     export_fd, export_path = tempfile.mkstemp(suffix=".xlsx")
