@@ -1541,11 +1541,11 @@ def woocommerce_order_created_webhook(payload: dict, db: Session = Depends(get_d
             <td align="center">
                 <table width="100%" style="max-width: 600px; background: #ffffff; border-radius: 20px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05); border-collapse: separate;" border="0" cellspacing="0" cellpadding="0">
                     
-                    <!-- Premium Dark Gradient Header -->
+                    <!-- Premium Branded Logo Header -->
                     <tr>
-                        <td style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 40px 32px; text-align: center; border-bottom: 4px solid #f97316;">
-                            <h1 style="color: #ffffff; margin: 0 0 8px 0; font-size: 28px; font-weight: 800; letter-spacing: -0.05em; text-transform: uppercase;">VULIUS</h1>
-                            <p style="color: #94a3b8; margin: 0; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.1em;">ORDER CONFIRMED</p>
+                        <td style="background: #ffffff; padding: 32px; text-align: center; border-bottom: 2px solid #f1f5f9;">
+                            <img src="https://vulius.com/wp-content/uploads/2023/07/logo-vulius-01-1400x630.png" style="height: 55px; width: auto; max-width: 200px; display: inline-block; object-fit: contain;" alt="VULIUS Logo" />
+                            <p style="color: #64748b; margin: 8px 0 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em;">ORDER CONFIRMED</p>
                         </td>
                     </tr>
                     
