@@ -193,7 +193,7 @@ def get_orders(
         except Exception:
             pass
         
-    orders = query.order_by(Order.id.asc()).all()
+    orders = query.order_by(Order.created_at.desc()).all()
     return orders
 
 
