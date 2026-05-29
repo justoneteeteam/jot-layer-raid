@@ -670,9 +670,7 @@ def scan_wechat_pdfs(db: Session = Depends(get_db)):
     Extract customer name and tracking number to match with database orders.
     """
     matches = []
-    unfulfilled_orders = db.query(Order).filter(
-        Order.shipping_status.in_(["placed", "placed order", "in transit"])
-    ).all()
+    all_orders = db.query(Order).all()
     
     scanned_files = []
     
@@ -734,17 +732,20 @@ def scan_wechat_pdfs(db: Session = Depends(get_db)):
             matched_order_num = None
             customer_name_found = ""
             confidence = "none"
-            is_excel_match = False
-            excel_info = None
+            existing_tracking = None
             
             text_lower = text.lower()
-            for order in unfulfilled_orders:
+            for order in all_orders:
                 cust_lower = order.customer_name.lower()
                 if cust_lower in text_lower:
                     matched_order_id = order.id
                     matched_order_num = order.order_id
                     customer_name_found = order.customer_name
-                    confidence = "high"
+                    if order.tracking_number and order.tracking_number.strip():
+                        confidence = "duplicate"
+                        existing_tracking = order.tracking_number
+                    else:
+                        confidence = "high"
                     break
             
             if not matched_order_id:
@@ -775,7 +776,8 @@ def scan_wechat_pdfs(db: Session = Depends(get_db)):
                 "extracted_customer": customer_name_found,
                 "matched_order_id": matched_order_id,
                 "matched_order_number": matched_order_num,
-                "confidence": confidence
+                "confidence": confidence,
+                "existing_tracking": existing_tracking
             })
             
         except Exception as e:
@@ -791,9 +793,7 @@ async def upload_wechat_pdfs(files: List[UploadFile] = File(...), db: Session = 
     Extract customer name and tracking number to match with database orders.
     """
     matches = []
-    unfulfilled_orders = db.query(Order).filter(
-        Order.shipping_status.in_(["placed", "placed order", "in transit"])
-    ).all()
+    all_orders = db.query(Order).all()
 
     for file in files:
         filename = file.filename
@@ -837,15 +837,20 @@ async def upload_wechat_pdfs(files: List[UploadFile] = File(...), db: Session = 
             matched_order_num = None
             customer_name_found = ""
             confidence = "none"
+            existing_tracking = None
             
             text_lower = text.lower()
-            for order in unfulfilled_orders:
+            for order in all_orders:
                 cust_lower = order.customer_name.lower()
                 if cust_lower in text_lower:
                     matched_order_id = order.id
                     matched_order_num = order.order_id
                     customer_name_found = order.customer_name
-                    confidence = "high"
+                    if order.tracking_number and order.tracking_number.strip():
+                        confidence = "duplicate"
+                        existing_tracking = order.tracking_number
+                    else:
+                        confidence = "high"
                     break
             
             if not matched_order_id:
@@ -876,7 +881,8 @@ async def upload_wechat_pdfs(files: List[UploadFile] = File(...), db: Session = 
                 "extracted_customer": customer_name_found,
                 "matched_order_id": matched_order_id,
                 "matched_order_number": matched_order_num,
-                "confidence": confidence
+                "confidence": confidence,
+                "existing_tracking": existing_tracking
             })
             
         except Exception as e:

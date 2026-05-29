@@ -60,9 +60,9 @@ const formatCreatedDate = (dateStr: string) => {
       const datePart = parts[0] || "";
       const dateSubparts = datePart.split("-");
       if (dateSubparts.length === 3) {
-        const y = dateSubparts[0].slice(-2);
-        const m = dateSubparts[1];
-        const d = dateSubparts[2];
+        const y = dateSubparts[0]!.slice(-2);
+        const m = dateSubparts[1]!;
+        const d = dateSubparts[2]!;
         return `${d}/${m}/${y}`;
       }
       return dateStr;

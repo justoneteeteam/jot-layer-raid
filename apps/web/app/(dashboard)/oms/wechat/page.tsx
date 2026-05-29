@@ -13,7 +13,8 @@ interface MatchResult {
   extracted_customer: string;
   matched_order_id: number | null;
   matched_order_number: string | null;
-  confidence: string; // "high", "unmatched", "none"
+  confidence: string; // "high", "unmatched", "none", "duplicate"
+  existing_tracking?: string | null;
 }
 
 export default function WeChatSyncPage() {
@@ -23,16 +24,33 @@ export default function WeChatSyncPage() {
   const [scannedMatches, setScannedMatches] = useState<MatchResult[]>([]);
   const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"success" | "duplicate" | "failed">("success");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Derive filtered matching subsets
+  const successMatches = scannedMatches.filter((m) => m.confidence === "high");
+  const duplicateMatches = scannedMatches.filter((m) => m.confidence === "duplicate");
+  const failedMatches = scannedMatches.filter((m) => m.confidence === "unmatched" || m.confidence === "none");
 
   // Parse & process matched items
   const processScanResults = (data: MatchResult[]) => {
     setScannedMatches(data);
-    // Select high confidence matches by default
+    // Select high confidence success matches by default
     const initialSelected = data
       .map((m: MatchResult, index: number) => (m.confidence === "high" ? index : null))
       .filter((val: any) => val !== null) as number[];
     setSelectedIndices(initialSelected);
+
+    // Auto-switch to the first tab with records
+    const hasSuccess = data.some((m) => m.confidence === "high");
+    const hasDuplicate = data.some((m) => m.confidence === "duplicate");
+    if (hasSuccess) {
+      setActiveTab("success");
+    } else if (hasDuplicate) {
+      setActiveTab("duplicate");
+    } else {
+      setActiveTab("failed");
+    }
   };
 
   // Upload PDFs to backend
@@ -43,7 +61,10 @@ export default function WeChatSyncPage() {
 
     const formData = new FormData();
     for (let i = 0; i < files.length; i++) {
-      formData.append("files", files[i]);
+      const file = files[i];
+      if (file) {
+        formData.append("files", file);
+      }
     }
 
     try {
@@ -277,142 +298,413 @@ export default function WeChatSyncPage() {
         </div>
       ) : scannedMatches.length > 0 ? (
         <div style={{ marginTop: "32px" }}>
-          {/* Action Toolbar */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-              <h3 style={{ fontSize: "16px", fontWeight: "800", color: "var(--text-primary)", margin: 0 }}>
-                Matched Shipments ({scannedMatches.length})
-              </h3>
-              <div style={{ display: "flex", gap: "6px" }}>
-                <button onClick={selectAllHighConfidence} className="btn btn-secondary" style={{ fontSize: "11px", height: "26px", padding: "0 8px", background: "#f3f4f6", border: "none" }}>
-                  Select Matches
-                </button>
-                <button onClick={selectAllMatches} className="btn btn-secondary" style={{ fontSize: "11px", height: "26px", padding: "0 8px", background: "#f3f4f6", border: "none" }}>
-                  Select All
-                </button>
+          
+          {/* Announcements Status Grid */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "16px", marginBottom: "28px" }}>
+            
+            {/* Card 1: Successful Matches */}
+            <div 
+              onClick={() => setActiveTab("success")}
+              style={{
+                background: activeTab === "success" 
+                  ? "linear-gradient(135deg, hsl(142, 76%, 97%) 0%, hsl(142, 70%, 98%) 100%)" 
+                  : "rgba(255, 255, 255, 0.8)",
+                border: activeTab === "success" 
+                  ? "2px solid hsl(142, 76%, 40%)" 
+                  : "1px solid rgba(229, 231, 235, 0.5)",
+                borderRadius: "16px",
+                padding: "20px",
+                cursor: "pointer",
+                transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+                boxShadow: activeTab === "success" 
+                  ? "0 10px 15px -3px rgba(16, 185, 129, 0.08), inset 0 2px 4px rgba(255, 255, 255, 0.8)" 
+                  : "0 4px 6px -1px rgba(0,0,0,0.01)",
+                display: "flex",
+                alignItems: "center",
+                gap: "16px",
+                transform: activeTab === "success" ? "translateY(-2px)" : "translateY(0)"
+              }}
+            >
+              <div style={{
+                width: "48px",
+                height: "48px",
+                borderRadius: "12px",
+                background: "hsl(142, 70%, 90%)",
+                color: "hsl(142, 76%, 30%)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "20px"
+              }}>
+                ✔️
+              </div>
+              <div>
+                <h3 style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-secondary)", margin: 0 }}>
+                  Successful Matches
+                </h3>
+                <p style={{ fontSize: "22px", fontWeight: "800", color: "hsl(142, 76%, 20%)", margin: "2px 0 0" }}>
+                  {successMatches.length} <span style={{ fontSize: "11px", fontWeight: "500", color: "hsl(142, 76%, 30%)" }}>ready to sync</span>
+                </p>
               </div>
             </div>
-            <span style={{ fontSize: "12px", color: "var(--text-secondary)", fontWeight: "500" }}>
-              {selectedIndices.length} items checked for database injection
-            </span>
+
+            {/* Card 2: Duplicate Matches */}
+            <div 
+              onClick={() => setActiveTab("duplicate")}
+              style={{
+                background: activeTab === "duplicate" 
+                  ? "linear-gradient(135deg, hsl(47, 95%, 97%) 0%, hsl(47, 90%, 98%) 100%)" 
+                  : "rgba(255, 255, 255, 0.8)",
+                border: activeTab === "duplicate" 
+                  ? "2px solid hsl(47, 95%, 35%)" 
+                  : "1px solid rgba(229, 231, 235, 0.5)",
+                borderRadius: "16px",
+                padding: "20px",
+                cursor: "pointer",
+                transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+                boxShadow: activeTab === "duplicate" 
+                  ? "0 10px 15px -3px rgba(245, 158, 11, 0.08), inset 0 2px 4px rgba(255, 255, 255, 0.8)" 
+                  : "0 4px 6px -1px rgba(0,0,0,0.01)",
+                display: "flex",
+                alignItems: "center",
+                gap: "16px",
+                transform: activeTab === "duplicate" ? "translateY(-2px)" : "translateY(0)"
+              }}
+            >
+              <div style={{
+                width: "48px",
+                height: "48px",
+                borderRadius: "12px",
+                background: "hsl(47, 90%, 90%)",
+                color: "hsl(47, 95%, 25%)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "20px"
+              }}>
+                ⚠️
+              </div>
+              <div>
+                <h3 style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-secondary)", margin: 0 }}>
+                  Duplicate Slips
+                </h3>
+                <p style={{ fontSize: "22px", fontWeight: "800", color: "hsl(47, 95%, 20%)", margin: "2px 0 0" }}>
+                  {duplicateMatches.length} <span style={{ fontSize: "11px", fontWeight: "500", color: "hsl(47, 95%, 30%)" }}>already tracked</span>
+                </p>
+              </div>
+            </div>
+
+            {/* Card 3: Failed Matches */}
+            <div 
+              onClick={() => setActiveTab("failed")}
+              style={{
+                background: activeTab === "failed" 
+                  ? "linear-gradient(135deg, hsl(0, 72%, 97%) 0%, hsl(0, 60%, 98%) 100%)" 
+                  : "rgba(255, 255, 255, 0.8)",
+                border: activeTab === "failed" 
+                  ? "2px solid hsl(0, 72%, 40%)" 
+                  : "1px solid rgba(229, 231, 235, 0.5)",
+                borderRadius: "16px",
+                padding: "20px",
+                cursor: "pointer",
+                transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+                boxShadow: activeTab === "failed" 
+                  ? "0 10px 15px -3px rgba(239, 68, 68, 0.08), inset 0 2px 4px rgba(255, 255, 255, 0.8)" 
+                  : "0 4px 6px -1px rgba(0,0,0,0.01)",
+                display: "flex",
+                alignItems: "center",
+                gap: "16px",
+                transform: activeTab === "failed" ? "translateY(-2px)" : "translateY(0)"
+              }}
+            >
+              <div style={{
+                width: "48px",
+                height: "48px",
+                borderRadius: "12px",
+                background: "hsl(0, 72%, 90%)",
+                color: "hsl(0, 72%, 30%)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "20px"
+              }}>
+                ❌
+              </div>
+              <div>
+                <h3 style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-secondary)", margin: 0 }}>
+                  Unmatched Slips
+                </h3>
+                <p style={{ fontSize: "22px", fontWeight: "800", color: "hsl(0, 72%, 20%)", margin: "2px 0 0" }}>
+                  {failedMatches.length} <span style={{ fontSize: "11px", fontWeight: "500", color: "hsl(0, 72%, 30%)" }}>order not found</span>
+                </p>
+              </div>
+            </div>
+
           </div>
 
-          {/* Results Table */}
+          {/* Action Toolbar */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+              <h3 style={{ fontSize: "16px", fontWeight: "800", color: "var(--text-primary)", margin: 0, textTransform: "capitalize" }}>
+                {activeTab === "success" ? "Ready for Database Sync" : activeTab === "duplicate" ? "Duplicate Warnings Ledger" : "Failed Name Matches"} ({
+                  activeTab === "success" ? successMatches.length : activeTab === "duplicate" ? duplicateMatches.length : failedMatches.length
+                })
+              </h3>
+              
+              {activeTab === "success" && successMatches.length > 0 && (
+                <div style={{ display: "flex", gap: "6px" }}>
+                  <button onClick={selectAllHighConfidence} className="btn btn-secondary" style={{ fontSize: "11px", height: "26px", padding: "0 8px", background: "#f3f4f6", border: "none" }}>
+                    Select High Confidence
+                  </button>
+                  <button onClick={selectAllMatches} className="btn btn-secondary" style={{ fontSize: "11px", height: "26px", padding: "0 8px", background: "#f3f4f6", border: "none" }}>
+                    Select All Matched
+                  </button>
+                </div>
+              )}
+
+              {activeTab === "duplicate" && duplicateMatches.length > 0 && (
+                <button onClick={selectAllMatches} className="btn btn-secondary" style={{ fontSize: "11px", height: "26px", padding: "0 8px", background: "#f3f4f6", border: "none" }}>
+                  Select All Duplicates
+                </button>
+              )}
+            </div>
+            
+            {activeTab !== "failed" && (
+              <span style={{ fontSize: "12px", color: "var(--text-secondary)", fontWeight: "500" }}>
+                {selectedIndices.filter(idx => {
+                  const conf = scannedMatches[idx]?.confidence;
+                  return activeTab === "success" ? conf === "high" : conf === "duplicate";
+                }).length} items checked in this category
+              </span>
+            )}
+          </div>
+
+          {/* Ledger Table */}
           <div style={{ background: "white", borderRadius: "14px", border: "1px solid var(--border-default)", overflow: "hidden", boxShadow: "0 4px 6px -1px rgba(0, 0, 0, 0.02)" }}>
             <div style={{ overflowX: "auto" }}>
-              <table className="table" style={{ width: "100%", borderCollapse: "collapse", margin: 0 }}>
-                <thead>
-                  <tr style={{ background: "rgba(243, 244, 246, 0.5)", borderBottom: "1px solid var(--border-default)", fontSize: "11px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-secondary)" }}>
-                    <th style={{ width: "50px", padding: "14px", textAlign: "center" }}>
-                      <input
-                        type="checkbox"
-                        checked={selectedIndices.length === scannedMatches.filter(m => m.matched_order_id).length && scannedMatches.filter(m => m.matched_order_id).length > 0}
-                        onChange={() => {
-                          if (selectedIndices.length > 0) {
-                            setSelectedIndices([]);
-                          } else {
-                            selectAllMatches();
-                          }
-                        }}
-                      />
-                    </th>
-                    <th style={{ padding: "14px", textAlign: "left" }}>PDF Shipping slip</th>
-                    <th style={{ padding: "14px", textAlign: "left" }}>Extracted tracking</th>
-                    <th style={{ padding: "14px", textAlign: "left" }}>Recipient name</th>
-                    <th style={{ padding: "14px", textAlign: "left" }}>Database order match</th>
-                    <th style={{ padding: "14px", textAlign: "center" }}>Confidence</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {scannedMatches.map((match, index) => {
-                    const isSelected = selectedIndices.includes(index);
-                    const isHigh = match.confidence === "high";
-                    const isUnmatched = match.confidence === "unmatched";
-
-                    return (
-                      <tr
-                        key={index}
-                        style={{
-                          borderBottom: "1px solid var(--border-default)",
-                          background: isSelected ? "rgba(59, 130, 246, 0.02)" : "white",
-                          transition: "background 0.2s",
-                        }}
-                      >
-                        <td style={{ padding: "14px", textAlign: "center" }}>
+              
+              {activeTab === "success" ? (
+                successMatches.length === 0 ? (
+                  <div style={{ padding: "48px 24px", textAlign: "center", color: "var(--text-muted)" }}>
+                    <span style={{ fontSize: "28px" }}>🎉</span>
+                    <h4 style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-primary)", marginTop: "8px", marginBottom: "2px" }}>No Successful Pending Matches</h4>
+                    <p style={{ fontSize: "12px", margin: 0 }}>All uploaded files have been matched and synchronized, or are duplicates/unmatched.</p>
+                  </div>
+                ) : (
+                  <table className="table" style={{ width: "100%", borderCollapse: "collapse", margin: 0 }}>
+                    <thead>
+                      <tr style={{ background: "rgba(243, 244, 246, 0.5)", borderBottom: "1px solid var(--border-default)", fontSize: "11px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-secondary)" }}>
+                        <th style={{ width: "50px", padding: "14px", textAlign: "center" }}>
                           <input
                             type="checkbox"
-                            checked={isSelected}
-                            disabled={!match.matched_order_id}
-                            onChange={() => toggleSelect(index)}
-                          />
-                        </td>
-                        <td style={{ padding: "14px" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                            <span style={{ fontSize: "18px" }}>📄</span>
-                            <span style={{ fontWeight: "600", fontSize: "13px", color: "var(--text-primary)" }}>
-                              {match.filename}
-                            </span>
-                          </div>
-                        </td>
-                        <td style={{ padding: "14px" }}>
-                          {match.formatted_tracking ? (
-                            <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontFamily: "'Courier New', Courier, monospace", fontWeight: "700", color: "var(--text-primary)", fontSize: "13px", background: "#f3f4f6", padding: "4px 8px", borderRadius: "6px" }}>
-                              <span>🚚</span>
-                              <span>{match.formatted_tracking}</span>
-                            </div>
-                          ) : (
-                            <span style={{ color: "var(--text-muted)", fontSize: "12px", fontStyle: "italic" }}>Not found</span>
-                          )}
-                        </td>
-                        <td style={{ padding: "14px" }}>
-                          <span style={{ fontWeight: "700", fontSize: "13px", color: "var(--text-primary)" }}>
-                            {match.extracted_customer || "—"}
-                          </span>
-                        </td>
-                        <td style={{ padding: "14px" }}>
-                          {match.matched_order_id ? (
-                            <div style={{ display: "inline-flex", flexDirection: "column" }}>
-                              <span style={{ fontWeight: "700", fontSize: "13px", color: "var(--accent)" }}>
-                                Order {match.matched_order_number}
-                              </span>
-                              <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>
-                                Customer DB ID: #{match.matched_order_id}
-                              </span>
-                            </div>
-                          ) : (
-                            <span style={{ color: "var(--text-muted)", fontSize: "12px" }}>
-                              No matching pending orders
-                            </span>
-                          )}
-                        </td>
-                        <td style={{ padding: "14px", textAlign: "center" }}>
-                          <span
-                            style={{
-                              display: "inline-block",
-                              padding: "4px 10px",
-                              borderRadius: "999px",
-                              fontSize: "11px",
-                              fontWeight: "700",
-                              background: isHigh
-                                ? "hsl(142.1, 70.6%, 90.3%)"
-                                : isUnmatched
-                                ? "hsl(47.9, 95.8%, 90%)"
-                                : "hsl(0, 72.2%, 93%)",
-                              color: isHigh
-                                ? "hsl(142.1, 76.2%, 20%)"
-                                : isUnmatched
-                                ? "hsl(47.9, 95.8%, 25%)"
-                                : "hsl(0, 72.2%, 25%)",
+                            checked={successMatches.every(m => selectedIndices.includes(scannedMatches.indexOf(m)))}
+                            onChange={() => {
+                              const successIndices = successMatches.map(m => scannedMatches.indexOf(m));
+                              const allChecked = successIndices.every(idx => selectedIndices.includes(idx));
+                              if (allChecked) {
+                                setSelectedIndices(prev => prev.filter(idx => !successIndices.includes(idx)));
+                              } else {
+                                setSelectedIndices(prev => Array.from(new Set([...prev, ...successIndices])));
+                              }
                             }}
-                          >
-                            {isHigh ? "PERFECT MATCH" : isUnmatched ? "UNMATCHED NAME" : "SCAN ERROR"}
-                          </span>
-                        </td>
+                          />
+                        </th>
+                        <th style={{ padding: "14px", textAlign: "left" }}>PDF Shipping slip</th>
+                        <th style={{ padding: "14px", textAlign: "left" }}>Extracted tracking</th>
+                        <th style={{ padding: "14px", textAlign: "left" }}>Recipient name</th>
+                        <th style={{ padding: "14px", textAlign: "left" }}>Database order match</th>
+                        <th style={{ padding: "14px", textAlign: "center" }}>Confidence</th>
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                    </thead>
+                    <tbody>
+                      {scannedMatches.map((match, index) => {
+                        if (match.confidence !== "high") return null;
+                        const isSelected = selectedIndices.includes(index);
+                        return (
+                          <tr key={index} style={{ borderBottom: "1px solid var(--border-default)", background: isSelected ? "rgba(59, 130, 246, 0.02)" : "white", transition: "background 0.2s" }}>
+                            <td style={{ padding: "14px", textAlign: "center" }}>
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleSelect(index)}
+                              />
+                            </td>
+                            <td style={{ padding: "14px" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                <span style={{ fontSize: "18px" }}>📄</span>
+                                <span style={{ fontWeight: "600", fontSize: "13px", color: "var(--text-primary)" }}>{match.filename}</span>
+                              </div>
+                            </td>
+                            <td style={{ padding: "14px" }}>
+                              <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontFamily: "'Courier New', Courier, monospace", fontWeight: "700", color: "var(--text-primary)", fontSize: "13px", background: "#f3f4f6", padding: "4px 8px", borderRadius: "6px" }}>
+                                <span>🚚</span>
+                                <span>{match.formatted_tracking || "No Barcode"}</span>
+                              </div>
+                            </td>
+                            <td style={{ padding: "14px" }}>
+                              <span style={{ fontWeight: "700", fontSize: "13px", color: "var(--text-primary)" }}>{match.extracted_customer || "—"}</span>
+                            </td>
+                            <td style={{ padding: "14px" }}>
+                              <div style={{ display: "inline-flex", flexDirection: "column" }}>
+                                <span style={{ fontWeight: "700", fontSize: "13px", color: "var(--accent)" }}>Order {match.matched_order_number}</span>
+                                <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>Customer DB ID: #{match.matched_order_id}</span>
+                              </div>
+                            </td>
+                            <td style={{ padding: "14px", textAlign: "center" }}>
+                              <span style={{ display: "inline-block", padding: "4px 10px", borderRadius: "999px", fontSize: "11px", fontWeight: "700", background: "hsl(142.1, 70.6%, 90.3%)", color: "hsl(142.1, 76.2%, 20%)" }}>
+                                PERFECT MATCH
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )
+              ) : activeTab === "duplicate" ? (
+                duplicateMatches.length === 0 ? (
+                  <div style={{ padding: "48px 24px", textAlign: "center", color: "var(--text-muted)" }}>
+                    <span style={{ fontSize: "28px" }}>✨</span>
+                    <h4 style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-primary)", marginTop: "8px", marginBottom: "2px" }}>No Duplicate Slips Detected</h4>
+                    <p style={{ fontSize: "12px", margin: 0 }}>None of the uploaded shipping labels match orders that already have tracking codes set.</p>
+                  </div>
+                ) : (
+                  <div>
+                    <div style={{ background: "hsl(47.9, 95.8%, 97%)", borderBottom: "1px solid hsl(47.9, 95.8%, 90%)", padding: "12px 18px", fontSize: "12px", color: "hsl(47.9, 95.8%, 25%)", fontWeight: "500", display: "flex", gap: "8px", alignItems: "center" }}>
+                      <span>💡</span>
+                      <span><strong>Warning:</strong> These orders already have tracking codes in the system. They are unchecked by default to prevent accidental overrides. Check them only if you wish to overwrite their tracking.</span>
+                    </div>
+                    <table className="table" style={{ width: "100%", borderCollapse: "collapse", margin: 0 }}>
+                      <thead>
+                        <tr style={{ background: "rgba(243, 244, 246, 0.5)", borderBottom: "1px solid var(--border-default)", fontSize: "11px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-secondary)" }}>
+                          <th style={{ width: "50px", padding: "14px", textAlign: "center" }}>
+                            <input
+                              type="checkbox"
+                              checked={duplicateMatches.every(m => selectedIndices.includes(scannedMatches.indexOf(m)))}
+                              onChange={() => {
+                                const dupIndices = duplicateMatches.map(m => scannedMatches.indexOf(m));
+                                const allChecked = dupIndices.every(idx => selectedIndices.includes(idx));
+                                if (allChecked) {
+                                  setSelectedIndices(prev => prev.filter(idx => !dupIndices.includes(idx)));
+                                } else {
+                                  setSelectedIndices(prev => Array.from(new Set([...prev, ...dupIndices])));
+                                }
+                              }}
+                            />
+                          </th>
+                          <th style={{ padding: "14px", textAlign: "left" }}>PDF Shipping slip</th>
+                          <th style={{ padding: "14px", textAlign: "left" }}>New tracking extracted</th>
+                          <th style={{ padding: "14px", textAlign: "left" }}>Recipient name</th>
+                          <th style={{ padding: "14px", textAlign: "left" }}>Existing tracking in db</th>
+                          <th style={{ padding: "14px", textAlign: "center" }}>Override</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {scannedMatches.map((match, index) => {
+                          if (match.confidence !== "duplicate") return null;
+                          const isSelected = selectedIndices.includes(index);
+                          return (
+                            <tr key={index} style={{ borderBottom: "1px solid var(--border-default)", background: isSelected ? "rgba(245, 158, 11, 0.02)" : "white", transition: "background 0.2s" }}>
+                              <td style={{ padding: "14px", textAlign: "center" }}>
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => toggleSelect(index)}
+                                />
+                              </td>
+                              <td style={{ padding: "14px" }}>
+                                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                  <span style={{ fontSize: "18px" }}>📄</span>
+                                  <span style={{ fontWeight: "600", fontSize: "13px", color: "var(--text-primary)" }}>{match.filename}</span>
+                                </div>
+                              </td>
+                              <td style={{ padding: "14px" }}>
+                                <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontFamily: "'Courier New', Courier, monospace", fontWeight: "700", color: "var(--text-primary)", fontSize: "13px", background: "#f3f4f6", padding: "4px 8px", borderRadius: "6px" }}>
+                                  <span>🚚</span>
+                                  <span>{match.formatted_tracking}</span>
+                                </div>
+                              </td>
+                              <td style={{ padding: "14px" }}>
+                                <span style={{ fontWeight: "700", fontSize: "13px", color: "var(--text-primary)" }}>{match.extracted_customer || "—"}</span>
+                              </td>
+                              <td style={{ padding: "14px" }}>
+                                <div style={{ display: "inline-flex", flexDirection: "column" }}>
+                                  <span style={{ fontWeight: "700", fontSize: "13px", color: "var(--text-primary)" }}>Order {match.matched_order_number}</span>
+                                  <span style={{ fontSize: "11px", color: "hsl(47.9, 95.8%, 30%)", fontFamily: "'Courier New', Courier, monospace", fontWeight: "700", marginTop: "2px" }}>
+                                    Already has: {match.existing_tracking}
+                                  </span>
+                                </div>
+                              </td>
+                              <td style={{ padding: "14px", textAlign: "center" }}>
+                                <span style={{ display: "inline-block", padding: "4px 10px", borderRadius: "999px", fontSize: "11px", fontWeight: "700", background: "hsl(47.9, 95.8%, 90%)", color: "hsl(47.9, 95.8%, 25%)" }}>
+                                  DUPLICATE WARNING
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )
+              ) : (
+                failedMatches.length === 0 ? (
+                  <div style={{ padding: "48px 24px", textAlign: "center", color: "var(--text-muted)" }}>
+                    <span style={{ fontSize: "28px" }}>👍</span>
+                    <h4 style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-primary)", marginTop: "8px", marginBottom: "2px" }}>All Slips Matched!</h4>
+                    <p style={{ fontSize: "12px", margin: 0 }}>Every uploaded shipping label successfully matched an active customer order in the database.</p>
+                  </div>
+                ) : (
+                  <table className="table" style={{ width: "100%", borderCollapse: "collapse", margin: 0 }}>
+                    <thead>
+                      <tr style={{ background: "rgba(243, 244, 246, 0.5)", borderBottom: "1px solid var(--border-default)", fontSize: "11px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-secondary)" }}>
+                        <th style={{ width: "50px", padding: "14px", textAlign: "center" }}>—</th>
+                        <th style={{ padding: "14px", textAlign: "left" }}>PDF Shipping slip</th>
+                        <th style={{ padding: "14px", textAlign: "left" }}>Extracted tracking</th>
+                        <th style={{ padding: "14px", textAlign: "left" }}>Extracted recipient candidate</th>
+                        <th style={{ padding: "14px", textAlign: "left" }}>Database Status</th>
+                        <th style={{ padding: "14px", textAlign: "center" }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {scannedMatches.map((match, index) => {
+                        if (match.confidence !== "unmatched" && match.confidence !== "none") return null;
+                        return (
+                          <tr key={index} style={{ borderBottom: "1px solid var(--border-default)", background: "white" }}>
+                            <td style={{ padding: "14px", textAlign: "center", color: "var(--text-muted)" }}>❌</td>
+                            <td style={{ padding: "14px" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                                <span style={{ fontSize: "18px" }}>📄</span>
+                                <span style={{ fontWeight: "600", fontSize: "13px", color: "var(--text-primary)" }}>{match.filename}</span>
+                              </div>
+                            </td>
+                            <td style={{ padding: "14px" }}>
+                              <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontFamily: "'Courier New', Courier, monospace", color: "var(--text-primary)", fontSize: "13px", background: "#f3f4f6", padding: "4px 8px", borderRadius: "6px" }}>
+                                <span>🚚</span>
+                                <span>{match.formatted_tracking || "Not Found"}</span>
+                              </div>
+                            </td>
+                            <td style={{ padding: "14px" }}>
+                              <span style={{ fontWeight: "700", fontSize: "13px", color: "hsl(0, 72.2%, 40%)" }}>{match.extracted_customer || "—"}</span>
+                            </td>
+                            <td style={{ padding: "14px" }}>
+                              <span style={{ fontSize: "12px", color: "var(--text-muted)" }}>
+                                No matching name found in database orders
+                              </span>
+                            </td>
+                            <td style={{ padding: "14px", textAlign: "center" }}>
+                              <span style={{ display: "inline-block", padding: "4px 10px", borderRadius: "999px", fontSize: "11px", fontWeight: "700", background: "hsl(0, 72.2%, 93%)", color: "hsl(0, 72.2%, 25%)" }}>
+                                NO ORDER MATCH
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )
+              )}
+
             </div>
           </div>
 
@@ -421,33 +713,54 @@ export default function WeChatSyncPage() {
             <button onClick={() => setScannedMatches([])} className="btn btn-secondary" style={{ padding: "0 20px" }}>
               Clear Panel
             </button>
-            <button
-              onClick={handleSyncTracking}
-              disabled={syncing || selectedIndices.length === 0}
-              className="btn btn-primary"
-              style={{
-                padding: "0 28px",
-                height: "44px",
-                fontWeight: "700",
-                fontSize: "14px",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: "8px",
-                boxShadow: "0 4px 6px -1px rgba(59, 130, 246, 0.2)"
-              }}
-            >
-              {syncing ? (
-                <>
-                  <div className="spinner" style={{ width: "16px", height: "16px", border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "white", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
-                  <span>Syncing...</span>
-                </>
-              ) : (
-                <>
-                  <span>✔️</span>
-                  <span>Sync {selectedIndices.length} Selected Tracking Numbers</span>
-                </>
-              )}
-            </button>
+            
+            {activeTab !== "failed" && (
+              <button
+                onClick={handleSyncTracking}
+                disabled={
+                  syncing || 
+                  selectedIndices.filter(idx => {
+                    const conf = scannedMatches[idx]?.confidence;
+                    return activeTab === "success" ? conf === "high" : conf === "duplicate";
+                  }).length === 0
+                }
+                className="btn btn-primary"
+                style={{
+                  padding: "0 28px",
+                  height: "44px",
+                  fontWeight: "700",
+                  fontSize: "14px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  boxShadow: activeTab === "success" 
+                    ? "0 4px 6px -1px rgba(16, 185, 129, 0.2)"
+                    : "0 4px 6px -1px rgba(245, 158, 11, 0.2)",
+                  background: activeTab === "success" 
+                    ? "hsl(142.1, 76.2%, 40%)"
+                    : "hsl(47.9, 95.8%, 35%)",
+                  border: "none",
+                  color: "white"
+                }}
+              >
+                {syncing ? (
+                  <>
+                    <div className="spinner" style={{ width: "16px", height: "16px", border: "2px solid rgba(255,255,255,0.3)", borderTopColor: "white", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+                    <span>Syncing...</span>
+                  </>
+                ) : (
+                  <>
+                    <span>✔️</span>
+                    <span>
+                      {activeTab === "success" 
+                        ? `Sync ${selectedIndices.filter(idx => scannedMatches[idx]?.confidence === "high").length} Matches to DB`
+                        : `Overwrite ${selectedIndices.filter(idx => scannedMatches[idx]?.confidence === "duplicate").length} Duplicates in DB`
+                      }
+                    </span>
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
       ) : null}
