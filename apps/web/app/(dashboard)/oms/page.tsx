@@ -237,7 +237,11 @@ export default function OrdersPage() {
         cost: o.cost,
       });
     });
-    return Object.values(groups);
+    return Object.values(groups).sort((a, b) => {
+      const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+      const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+      return dateB - dateA;
+    });
   };
 
   const groupedOrders = getGroupedOrders();
