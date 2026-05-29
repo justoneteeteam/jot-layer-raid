@@ -61,14 +61,28 @@ DEFAULT_EMAIL_SETTINGS = {
 }
 
 def load_email_settings():
-    if not os.path.exists(SETTINGS_FILE):
-        return DEFAULT_EMAIL_SETTINGS
-    try:
-        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Error loading email settings: {e}")
-        return DEFAULT_EMAIL_SETTINGS
+    settings = DEFAULT_EMAIL_SETTINGS.copy()
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                file_settings = json.load(f)
+                settings.update(file_settings)
+        except Exception as e:
+            logger.error(f"Error loading email settings: {e}")
+            
+    # Override with secure system environment variables if set (vital for Railway persistence)
+    env_account_id = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+    env_api_token = os.getenv("CLOUDFLARE_API_TOKEN")
+    env_sender = os.getenv("SENDER_EMAIL")
+    
+    if env_account_id:
+        settings["cloudflare_account_id"] = env_account_id
+    if env_api_token:
+        settings["cloudflare_api_token"] = env_api_token
+    if env_sender:
+        settings["sender_email"] = env_sender
+        
+    return settings
 
 def persist_email_settings(settings):
     try:
@@ -86,7 +100,7 @@ def format_template(template_str, customer_name, order_id, shipping_status, trac
             .replace("{shipping_status}", (shipping_status or "").upper())
             .replace("{tracking_number}", tracking_number or ""))
 
-def actual_send_email(to_email: str, subject: str, body_text: str):
+def actual_send_email(to_email: str, subject: str, body_text: str, custom_html: str = None):
     """Send a real email using Cloudflare Email Sending Service REST API."""
     settings = load_email_settings()
     account_id = settings.get("cloudflare_account_id")
@@ -103,7 +117,7 @@ def actual_send_email(to_email: str, subject: str, body_text: str):
         "Content-Type": "application/json"
     }
     
-    html_body = f"""
+    html_body = custom_html if custom_html else f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
         <div style="border-bottom: 1px solid #f1f5f9; padding-bottom: 16px; margin-bottom: 20px;">
             <h2 style="color: #f97316; margin: 0; font-size: 20px; font-weight: bold;">JOT Support Logistics</h2>
@@ -1322,3 +1336,315 @@ def resend_order(order_id: str, db: Session = Depends(get_db)):
         "new_order_id": new_order_id, 
         "message": f"Successfully created resend order {new_order_id}."
     }
+
+
+@router.post("/webhook/woocommerce")
+@router.post("/webhooks/woocommerce/order-created")
+def woocommerce_order_created_webhook(payload: dict, db: Session = Depends(get_db)):
+    """
+    Real-Time webhook receiver for WooCommerce 'order.created' topic.
+    Safely deduplicates, saves order rows, and dispatches the Cloudflare email.
+    """
+    order_id = str(payload.get("id"))
+    if not order_id:
+        raise HTTPException(status_code=400, detail="Invalid webhook payload: Missing order ID.")
+
+    # 1. Deduplication Guard: Check if the order already exists in the database
+    existing = db.query(Order).filter(Order.order_id == order_id).first()
+    if existing:
+        logger.info(f"Webhook received for already existing order {order_id}. Skipping to prevent duplication.")
+        return {"status": "skipped", "message": f"Order {order_id} already exists in database. No duplicates created."}
+
+    # 2. Extract Customer Details
+    billing = payload.get("billing", {})
+    shipping = payload.get("shipping", {}) or billing
+    
+    address_parts = [
+        shipping.get("address_1", ""),
+        shipping.get("address_2", ""),
+        shipping.get("city", ""),
+        shipping.get("state", ""),
+        shipping.get("postcode", ""),
+        shipping.get("country", "")
+    ]
+    customer_address = ", ".join([p for p in address_parts if p.strip()]) or "No Address Provided"
+    customer_name = f"{shipping.get('first_name', '')} {shipping.get('last_name', '')}".strip() or \
+                    f"{billing.get('first_name', '')} {billing.get('last_name', '')}".strip() or "Customer"
+    customer_email = billing.get("email") or ""
+
+    # Parse and save each item in the order
+    line_items = payload.get("line_items", [])
+    if not line_items:
+        logger.warning(f"WooCommerce webhook received order {order_id} with no line items.")
+        return {"status": "skipped", "message": "Order contains no line items."}
+
+    # Determine default shipping status mapping
+    status_map = {
+        "pending": "placed",
+        "processing": "placed",
+        "on-hold": "placed",
+        "completed": "delivered",
+        "cancelled": "incident",
+        "refunded": "incident",
+        "failed": "incident"
+    }
+    ship_status = status_map.get(payload.get("status", "processing"), "placed")
+
+    # Extract tracking number from metadata if available
+    tracking_num = ""
+    for meta in payload.get("meta_data", []):
+        key_l = meta.get("key", "").lower()
+        if "tracking" in key_l or "carrier" in key_l:
+            tracking_num = str(meta.get("value", ""))
+            if tracking_num:
+                ship_status = "in transit"
+            break
+
+    # Load email settings to check if auto-reply should trigger
+    email_settings = load_email_settings()
+    auto_reply_enabled = email_settings.get("auto_reply_enabled", True)
+    template_subject = email_settings.get("template_subject", "Instant AI Update regarding your order {order_id}")
+    template_body = email_settings.get("template_body", "")
+
+    email_dispatched = False
+    items_html = ""
+
+    for item in line_items:
+        product_name = item.get("name", "Jersey Mockup")
+        
+        # Check size, custom number, name from custom metadata
+        size_val = ""
+        number_val = ""
+        name_val = ""
+        
+        for meta in item.get("meta_data", []):
+            key = meta.get("key", "")
+            if key == "_WCPA_order_meta_data":
+                meta_val = meta.get("value")
+                if isinstance(meta_val, str):
+                    try:
+                        import json as json_lib
+                        meta_val = json_lib.loads(meta_val)
+                    except Exception:
+                        pass
+                
+                if isinstance(meta_val, list):
+                    for field in meta_val:
+                        label = field.get("label", "")
+                        val = field.get("value", "")
+                        
+                        if label == "Size":
+                            if isinstance(val, dict):
+                                for k, v in val.items():
+                                    if isinstance(v, dict):
+                                        size_val = v.get("value") or v.get("label") or size_val
+                                    else:
+                                        size_val = v or size_val
+                                    break
+                            else:
+                                size_val = str(val)
+                        elif label == "Custom Number":
+                            number_val = str(val)
+                        elif label == "Custom Your Name":
+                            name_val = str(val)
+
+        custom_variants = []
+        item_variant_str = ""
+        if size_val:
+            custom_variants.append(f"Size: {size_val}")
+            item_variant_str += f"<span style='display:inline-block; margin-right:8px; margin-top:4px; padding:2px 6px; background:#f1f5f9; border-radius:4px; font-size:12px; color:#475569;'>Size: {size_val}</span>"
+        if name_val:
+            custom_variants.append(f"Name: {name_val}")
+            item_variant_str += f"<span style='display:inline-block; margin-right:8px; margin-top:4px; padding:2px 6px; background:#f1f5f9; border-radius:4px; font-size:12px; color:#475569;'>Name: {name_val}</span>"
+        if number_val:
+            custom_variants.append(f"Number: {number_val}")
+            item_variant_str += f"<span style='display:inline-block; margin-right:8px; margin-top:4px; padding:2px 6px; background:#f1f5f9; border-radius:4px; font-size:12px; color:#475569;'>Number: {number_val}</span>"
+            
+        if custom_variants:
+            meta_desc = ", ".join(custom_variants)
+            variant_val = size_val
+        else:
+            meta_desc = ", ".join([f"{m.get('key')}: {m.get('value')}" for m in item.get("meta_data", []) if not m.get('key', '').startswith('_')])
+            variant_val = item.get("meta_data", [{}])[0].get("value", "Defa") if item.get("meta_data") else "Defa"
+
+        img_url = "https://images.unsplash.com/photo-1540747737956-3787256af2db?w=200"
+        
+        new_order = Order(
+            store_id="WaiRaiders Store",
+            order_id=order_id,
+            order_name=str(payload.get("number") or order_id),
+            customer_name=customer_name,
+            customer_address=customer_address,
+            customer_email=customer_email,
+            product_name=product_name,
+            product_image=img_url,
+            quantity=item.get("quantity", 1),
+            variant=meta_desc,
+            variant_value=str(variant_val)[:10],
+            revenue=float(payload.get("total", 84.0)),
+            cost=20.0,
+            shipping_status=ship_status,
+            tracking_number=tracking_num,
+            email_sent=False,
+            created_at=datetime.fromisoformat(payload.get("date_created").replace("Z", "+00:00") if payload.get("date_created") else datetime.now().isoformat()),
+            synced_at=datetime.now(timezone.utc)
+        )
+        db.add(new_order)
+
+        # Build clean dynamic row for this item in the HTML template
+        items_html += f"""
+        <tr style="border-bottom: 1px solid #f1f5f9;">
+            <td style="padding: 16px 0; vertical-align: middle;">
+                <table border="0" cellspacing="0" cellpadding="0">
+                    <tr>
+                        <td style="width: 50px; height: 50px; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden; padding: 0;">
+                            <img src="{img_url}" style="width: 50px; height: 50px; object-fit: cover; display: block;" />
+                        </td>
+                        <td style="padding-left: 12px; vertical-align: middle;">
+                            <div style="font-weight: 600; color: #1e293b; font-size: 14px; line-height: 1.4;">{product_name}</div>
+                            <div style="margin-top: 2px;">{item_variant_str}</div>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+            <td style="padding: 16px 0; text-align: center; color: #475569; font-size: 14px; vertical-align: middle;">x{item.get("quantity", 1)}</td>
+            <td style="padding: 16px 0; text-align: right; font-weight: 600; color: #0f172a; font-size: 14px; vertical-align: middle;">${item.get("total", "84.00")}</td>
+        </tr>
+        """
+
+    # 3. Dispatch premium HTML confirmation email once per webhook event
+    if auto_reply_enabled and customer_email:
+        tracking_str = tracking_num if tracking_num else "Awaiting carrier scanning processing"
+        
+        # Plain text fallback body
+        auto_reply_message = format_template(
+            template_body,
+            customer_name=customer_name,
+            order_id=order_id,
+            shipping_status=ship_status,
+            tracking_number=tracking_str
+        )
+        
+        subject_line = template_subject.replace("{order_id}", order_id)
+        
+        # Build premium high-fidelity HTML envelope
+        html_envelope = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Confirmed</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f8fafc; padding: 32px 16px;">
+        <tr>
+            <td align="center">
+                <table width="100%" style="max-width: 600px; background: #ffffff; border-radius: 20px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05); border-collapse: separate;" border="0" cellspacing="0" cellpadding="0">
+                    
+                    <!-- Premium Dark Gradient Header -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 40px 32px; text-align: center; border-bottom: 4px solid #f97316;">
+                            <h1 style="color: #ffffff; margin: 0 0 8px 0; font-size: 28px; font-weight: 800; letter-spacing: -0.05em; text-transform: uppercase;">VULIUS</h1>
+                            <p style="color: #94a3b8; margin: 0; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.1em;">ORDER CONFIRMED</p>
+                        </td>
+                    </tr>
+                    
+                    <!-- Content Area -->
+                    <tr>
+                        <td style="padding: 32px;">
+                            <p style="margin: 0 0 12px 0; font-size: 20px; font-weight: 700; color: #0f172a;">Thank you for your order, {customer_name}!</p>
+                            <p style="margin: 0 0 24px 0; font-size: 15px; color: #475569; line-height: 1.6;">We have successfully received your purchase! Our production team is preparing to craft your customized sports jersey. Below are your order summary details.</p>
+                            
+                            <!-- Reference Details Card -->
+                            <table width="100%" style="background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0; padding: 16px; margin-bottom: 24px;" border="0" cellspacing="0" cellpadding="0">
+                                <tr>
+                                    <td>
+                                        <div style="font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">ORDER ID</div>
+                                        <div style="font-size: 16px; color: #0f172a; font-weight: 700;">#{order_id}</div>
+                                    </td>
+                                    <td align="right">
+                                        <div style="font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">SHIPPING STATUS</div>
+                                        <div style="font-size: 12px; color: #1e3a8a; background: #dbeafe; border-radius: 4px; padding: 2px 8px; font-weight: 600; display: inline-block; text-transform: uppercase;">{ship_status.upper()}</div>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Items Section -->
+                            <h3 style="margin: 0 0 12px 0; font-size: 15px; font-weight: 700; color: #0f172a; border-bottom: 2px solid #f1f5f9; padding-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em;">ITEMS ORDERED</h3>
+                            <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: 24px;">
+                                {items_html}
+                            </table>
+
+                            <!-- Financial Summary -->
+                            <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: 32px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
+                                <tr>
+                                    <td style="padding: 6px 0; color: #475569; font-size: 14px;">Subtotal</td>
+                                    <td style="padding: 6px 0; text-align: right; color: #0f172a; font-weight: 500; font-size: 14px;">${payload.get("total", "84.00")}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 6px 0; color: #475569; font-size: 14px;">Shipping</td>
+                                    <td style="padding: 6px 0; text-align: right; color: #16a34a; font-weight: 600; font-size: 14px; text-transform: uppercase;">FREE</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding: 12px 0 0 0; color: #0f172a; font-size: 16px; font-weight: 800; border-top: 2px double #e2e8f0;">Total Paid</td>
+                                    <td style="padding: 12px 0 0 0; text-align: right; color: #f97316; font-size: 18px; font-weight: 800; border-top: 2px double #e2e8f0;">${payload.get("total", "84.00")}</td>
+                                </tr>
+                            </table>
+
+                            <!-- Delivery Address Card -->
+                            <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: 32px;">
+                                <tr>
+                                    <td style="background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0; padding: 20px;">
+                                        <h4 style="margin: 0 0 8px 0; font-size: 13px; font-weight: 700; color: #0f172a; text-transform: uppercase; letter-spacing: 0.05em;">DELIVERY ADDRESS</h4>
+                                        <p style="margin: 0; font-size: 14px; color: #475569; line-height: 1.5; font-style: normal;">
+                                            <strong>{customer_name}</strong><br>
+                                            {customer_address}
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Track Button CTA -->
+                            <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: 16px;">
+                                <tr>
+                                    <td align="center">
+                                        <a href="https://www.17track.net/en/track?nums={tracking_num if tracking_num else ''}" target="_blank" style="background: linear-gradient(135deg, #f97316 0%, #ea580c 100%); color: #ffffff; text-decoration: none; padding: 16px 32px; border-radius: 10px; font-weight: 700; font-size: 15px; display: inline-block; box-shadow: 0 4px 10px -1px rgb(249 115 22 / 0.3); letter-spacing: 0.02em; text-transform: uppercase; text-align: center;">
+                                            TRACK YOUR JERSEY
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background: #f8fafc; border-top: 1px solid #e2e8f0; padding: 24px 32px; text-align: center; color: #94a3b8; font-size: 12px; font-weight: 500; line-height: 1.5;">
+                            <p style="margin: 0 0 4px 0;">This email was automatically generated and sent to you by <strong>VULIUS Store</strong>.</p>
+                            <p style="margin: 0;">If you have any questions, please reply directly to this support email.</p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+
+        email_sent_result = actual_send_email(customer_email, subject_line, auto_reply_message, custom_html=html_envelope)
+        if email_sent_result:
+            email_dispatched = True
+
+    db.commit()
+
+    if email_dispatched:
+        saved_orders = db.query(Order).filter(Order.order_id == order_id).all()
+        for o in saved_orders:
+            o.email_sent = True
+        db.commit()
+        logger.info(f"Successfully processed WooCommerce webhook for order {order_id} and sent confirmation email.")
+        return {"status": "success", "message": f"Order {order_id} created and confirmation email successfully sent to {customer_email}."}
+    else:
+        logger.info(f"Successfully processed WooCommerce webhook for order {order_id} (email was skipped or simulated).")
+        return {"status": "success", "message": f"Order {order_id} created successfully. Confirmation email was not sent (disabled or simulated)."}
+
