@@ -96,6 +96,8 @@ export default function OrdersPage() {
   const [customerProfile, setCustomerProfile] = useState<any>(null);
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [savingOrder, setSavingOrder] = useState(false);
+  const [resending, setResending] = useState(false);
+  const [deletingOrder, setDeletingOrder] = useState(false);
   
   // Editable fields in modal
   const [editOrderId, setEditOrderId] = useState("");
@@ -203,6 +205,91 @@ export default function OrdersPage() {
     } finally {
       setSendingReply(false);
     }
+  };
+
+  const handleDeleteOrder = async () => {
+    if (!activeDetailOrder) return;
+    if (!window.confirm(`Are you sure you want to delete order ${activeDetailOrder.order_id}? This action cannot be undone.`)) {
+      return;
+    }
+    setDeletingOrder(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/oms/orders/${encodeURIComponent(activeDetailOrder.order_id)}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setActiveDetailOrder(null);
+        setSelectedOrderIds(prev => prev.filter(id => id !== activeDetailOrder.order_id));
+        loadOrders();
+      } else {
+        alert("Failed to delete order.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Network error deleting order.");
+    } finally {
+      setDeletingOrder(false);
+    }
+  };
+
+  const handleResendOrder = async (orderId: string) => {
+    if (!orderId) return;
+    if (!window.confirm(`Are you sure you want to create a Resend order for ${orderId}?`)) {
+      return;
+    }
+    setResending(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/oms/orders/${encodeURIComponent(orderId)}/resend`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        alert(`Resend order created successfully: ${data.new_order_id}`);
+        setActiveDetailOrder(null);
+        setSelectedOrderIds([]);
+        loadOrders();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.detail || "Failed to create resend order.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Network error creating resend order.");
+    } finally {
+      setResending(false);
+    }
+  };
+
+  const handleResendSelectedOrders = async () => {
+    if (selectedOrderIds.length === 0) {
+      alert("Please select at least one order to resend.");
+      return;
+    }
+    if (!window.confirm(`Are you sure you want to create Resend orders for the ${selectedOrderIds.length} selected order(s)?`)) {
+      return;
+    }
+    setResending(true);
+    let successCount = 0;
+    let failedCount = 0;
+    for (const oid of selectedOrderIds) {
+      try {
+        const res = await fetch(`${API_BASE}/api/oms/orders/${encodeURIComponent(oid)}/resend`, {
+          method: "POST",
+        });
+        if (res.ok) {
+          successCount++;
+        } else {
+          failedCount++;
+        }
+      } catch (err) {
+        console.error(err);
+        failedCount++;
+      }
+    }
+    alert(`Resend completed. Success: ${successCount}, Failed: ${failedCount}`);
+    setSelectedOrderIds([]);
+    loadOrders();
+    setResending(false);
   };
 
   // Group raw orders by order_id
@@ -418,6 +505,14 @@ export default function OrdersPage() {
             style={{ display: "inline-flex", alignItems: "center", gap: "6px", border: "1px solid var(--accent)", color: "var(--accent)", background: "var(--accent-light)" }}
           >
             {trackSyncing ? "✈️ Syncing 17track..." : "✈️ Sync 17track"}
+          </button>
+          <button
+            onClick={handleResendSelectedOrders}
+            disabled={resending || selectedOrderIds.length === 0}
+            className="btn btn-secondary"
+            style={{ display: "inline-flex", alignItems: "center", gap: "6px", border: "1px solid var(--accent)", color: "var(--accent)", background: "var(--accent-light)" }}
+          >
+            {resending ? "🔄 Resending..." : "🔄 Resend Order"}
           </button>
           <Link href="/oms/sync" className="btn btn-secondary" style={{ textDecoration: "none", display: "inline-flex", alignItems: "center", gap: "6px" }}>
             🔄 Sync Stores
@@ -1148,22 +1243,40 @@ export default function OrdersPage() {
             </div>
 
             {/* Modal Footer */}
-            <div className="upload-modal-footer" style={{ padding: "16px 24px", borderTop: "1px solid var(--border-default)", background: "var(--bg-secondary)", borderRadius: "0 0 16px 16px" }}>
-              <button className="btn btn-secondary" onClick={() => setActiveDetailOrder(null)}>Cancel</button>
+            <div className="upload-modal-footer" style={{ padding: "16px 24px", borderTop: "1px solid var(--border-default)", background: "var(--bg-secondary)", borderRadius: "0 0 16px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <button 
-                className="btn btn-primary" 
-                onClick={handleSaveOrderDetails}
-                disabled={savingOrder}
-                style={{ minWidth: "140px", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
+                className="btn btn-danger" 
+                onClick={handleDeleteOrder}
+                disabled={deletingOrder}
+                style={{ backgroundColor: "var(--error)", border: "none", color: "white", display: "inline-flex", alignItems: "center", gap: "6px" }}
               >
-                {savingOrder ? (
-                  <>
-                    <span className="upload-spinner" /> Saving...
-                  </>
-                ) : (
-                  "💾 Save Logistics"
-                )}
+                {deletingOrder ? "Deleting..." : "🗑️ Delete Order"}
               </button>
+              <div style={{ display: "flex", gap: "10px" }}>
+                <button 
+                  className="btn btn-secondary" 
+                  onClick={() => handleResendOrder(activeDetailOrder.order_id)}
+                  disabled={resending}
+                  style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
+                >
+                  {resending ? "🔄 Resending..." : "🔄 Resend Order"}
+                </button>
+                <button className="btn btn-secondary" onClick={() => setActiveDetailOrder(null)}>Cancel</button>
+                <button 
+                  className="btn btn-primary" 
+                  onClick={handleSaveOrderDetails}
+                  disabled={savingOrder}
+                  style={{ minWidth: "140px", display: "flex", alignItems: "center", justifyContent: "center", gap: "6px" }}
+                >
+                  {savingOrder ? (
+                    <>
+                      <span className="upload-spinner" /> Saving...
+                    </>
+                  ) : (
+                    "💾 Save Logistics"
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

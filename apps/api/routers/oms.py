@@ -670,7 +670,7 @@ def scan_wechat_pdfs(db: Session = Depends(get_db)):
     Extract customer name and tracking number to match with database orders.
     """
     matches = []
-    all_orders = db.query(Order).all()
+    all_orders = db.query(Order).order_by(Order.created_at.desc()).all()
     
     scanned_files = []
     
@@ -727,7 +727,7 @@ def scan_wechat_pdfs(db: Session = Depends(get_db)):
                     tracking_number[12:16], tracking_number[16:20], tracking_number[20:22]
                 ])
 
-            # Find customer matching name
+            # Find customer matching name (two-pass algorithm to prioritize orders without tracking numbers)
             matched_order_id = None
             matched_order_num = None
             customer_name_found = ""
@@ -735,18 +735,29 @@ def scan_wechat_pdfs(db: Session = Depends(get_db)):
             existing_tracking = None
             
             text_lower = text.lower()
+            
+            # Pass 1: Find a customer match where tracking_number is empty/None
             for order in all_orders:
                 cust_lower = order.customer_name.lower()
                 if cust_lower in text_lower:
-                    matched_order_id = order.id
-                    matched_order_num = order.order_id
-                    customer_name_found = order.customer_name
-                    if order.tracking_number and order.tracking_number.strip():
+                    if not order.tracking_number or not order.tracking_number.strip():
+                        matched_order_id = order.id
+                        matched_order_num = order.order_id
+                        customer_name_found = order.customer_name
+                        confidence = "high"
+                        break
+                        
+            # Pass 2: If no order without tracking is found, fall back to the most recent matching order (which has a tracking number)
+            if not matched_order_id:
+                for order in all_orders:
+                    cust_lower = order.customer_name.lower()
+                    if cust_lower in text_lower:
+                        matched_order_id = order.id
+                        matched_order_num = order.order_id
+                        customer_name_found = order.customer_name
                         confidence = "duplicate"
                         existing_tracking = order.tracking_number
-                    else:
-                        confidence = "high"
-                    break
+                        break
             
             if not matched_order_id:
                 lines = [l.strip() for l in text.split("\n") if l.strip()]
@@ -793,7 +804,7 @@ async def upload_wechat_pdfs(files: List[UploadFile] = File(...), db: Session = 
     Extract customer name and tracking number to match with database orders.
     """
     matches = []
-    all_orders = db.query(Order).all()
+    all_orders = db.query(Order).order_by(Order.created_at.desc()).all()
 
     for file in files:
         filename = file.filename
@@ -832,7 +843,7 @@ async def upload_wechat_pdfs(files: List[UploadFile] = File(...), db: Session = 
                     tracking_number[12:16], tracking_number[16:20], tracking_number[20:22]
                 ])
 
-            # Find customer matching name
+            # Find customer matching name (two-pass algorithm to prioritize orders without tracking numbers)
             matched_order_id = None
             matched_order_num = None
             customer_name_found = ""
@@ -840,18 +851,29 @@ async def upload_wechat_pdfs(files: List[UploadFile] = File(...), db: Session = 
             existing_tracking = None
             
             text_lower = text.lower()
+            
+            # Pass 1: Find a customer match where tracking_number is empty/None
             for order in all_orders:
                 cust_lower = order.customer_name.lower()
                 if cust_lower in text_lower:
-                    matched_order_id = order.id
-                    matched_order_num = order.order_id
-                    customer_name_found = order.customer_name
-                    if order.tracking_number and order.tracking_number.strip():
+                    if not order.tracking_number or not order.tracking_number.strip():
+                        matched_order_id = order.id
+                        matched_order_num = order.order_id
+                        customer_name_found = order.customer_name
+                        confidence = "high"
+                        break
+                        
+            # Pass 2: If no order without tracking is found, fall back to the most recent matching order (which has a tracking number)
+            if not matched_order_id:
+                for order in all_orders:
+                    cust_lower = order.customer_name.lower()
+                    if cust_lower in text_lower:
+                        matched_order_id = order.id
+                        matched_order_num = order.order_id
+                        customer_name_found = order.customer_name
                         confidence = "duplicate"
                         existing_tracking = order.tracking_number
-                    else:
-                        confidence = "high"
-                    break
+                        break
             
             if not matched_order_id:
                 lines = [l.strip() for l in text.split("\n") if l.strip()]
@@ -1227,3 +1249,76 @@ def update_order_details(order_id: str, data: dict, db: Session = Depends(get_db
             
     db.commit()
     return {"status": "ok", "message": f"Successfully updated details for order {order_id}."}
+
+
+@router.delete("/orders/{order_id}")
+def delete_order(order_id: str, db: Session = Depends(get_db)):
+    """Delete all line items (orders) with the specified order_id."""
+    deleted_count = db.query(Order).filter(Order.order_id == order_id).delete(synchronize_session=False)
+    if not deleted_count:
+        raise HTTPException(status_code=404, detail=f"No orders found with ID: {order_id}")
+    db.commit()
+    return {"status": "ok", "message": f"Successfully deleted order {order_id}."}
+
+
+@router.post("/orders/{order_id}/resend")
+def resend_order(order_id: str, db: Session = Depends(get_db)):
+    """Create a new resend order based on an existing order (e.g. delivery failed or incident)."""
+    # Extract base order ID (remove trailing " RS (X)" if it exists)
+    base_order_id = re.sub(r"\s+RS\s*\(\d+\)$", "", order_id).strip()
+    
+    # Find all line items of the order we want to resend
+    original_items = db.query(Order).filter(Order.order_id == order_id).all()
+    if not original_items:
+        raise HTTPException(status_code=404, detail=f"No orders found to resend with ID: {order_id}")
+        
+    # Query database for all orders starting with base_order_id to determine next RS sequence number
+    existing_orders = db.query(Order).filter(Order.order_id.like(f"{base_order_id}%")).all()
+    
+    max_resend = 0
+    for o in existing_orders:
+        oid = o.order_id
+        if oid == base_order_id:
+            continue
+        # Extract X from "base_order_id RS (X)"
+        match = re.search(r"RS\s*\((\d+)\)$", oid)
+        if match:
+            try:
+                val = int(match.group(1))
+                if val > max_resend:
+                    max_resend = val
+            except ValueError:
+                pass
+                
+    next_resend = max_resend + 1
+    new_order_id = f"{base_order_id} RS ({next_resend})"
+    
+    for item in original_items:
+        new_item = Order(
+            store_id=item.store_id,
+            order_id=new_order_id,
+            order_name=new_order_id.replace("#", "").strip(),
+            customer_name=item.customer_name,
+            customer_address=item.customer_address,
+            customer_email=item.customer_email,
+            product_name=item.product_name,
+            product_image=item.product_image,
+            quantity=item.quantity,
+            variant=item.variant,
+            variant_value=item.variant_value,
+            revenue=item.revenue,
+            cost=item.cost,
+            shipping_status="placed",  # Reset status
+            tracking_number="",  # Reset tracking number
+            email_sent=False,  # Reset email sent status
+            created_at=datetime.now(timezone.utc),
+            synced_at=datetime.now(timezone.utc)
+        )
+        db.add(new_item)
+        
+    db.commit()
+    return {
+        "status": "ok", 
+        "new_order_id": new_order_id, 
+        "message": f"Successfully created resend order {new_order_id}."
+    }
