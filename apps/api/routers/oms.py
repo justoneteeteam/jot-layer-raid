@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 from typing import List, Optional
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -33,8 +33,19 @@ router = APIRouter(prefix="/api/oms", tags=["OMS"])
 # WeChat PDF Directories to Scan
 WECHAT_DIRS = [
     r"d:\Codebase\AdstestJOT\wechat",
-    r"C:\Users\Finelaptop.vn\Documents\WeChat Files\wxid_i5tyisy8lh9422\FileStorage\File\2025-07"
+    r"C:\Users\Finelaptop.vn\Documents\WeChat Files\wxid_i5tyisy8lh9422\FileStorage\File\2025-07",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "wechat")
 ]
+
+def get_wechat_current_month_dir() -> Optional[str]:
+    """Dynamically resolves the WeChat local files folder for the current month on Mac."""
+    base_dir = "/Users/lukepham/Library/Containers/com.tencent.xinWeChat/Data/Documents/xwechat_files/wxid_i5tyisy8lh9422_a7fc/msg/file"
+    if os.path.exists(base_dir):
+        current_month = datetime.now().strftime("%Y-%m")
+        month_dir = os.path.join(base_dir, current_month)
+        if os.path.exists(month_dir):
+            return month_dir
+    return None
 
 # Automated CRM Email Keywords Rules and Settings Store
 SETTINGS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "email_settings.json")
@@ -659,39 +670,161 @@ def scan_wechat_pdfs(db: Session = Depends(get_db)):
     Extract customer name and tracking number to match with database orders.
     """
     matches = []
-    unfulfilled_orders = db.query(Order).filter(Order.shipping_status == "placed").all()
+    unfulfilled_orders = db.query(Order).filter(
+        Order.shipping_status.in_(["placed", "placed order", "in transit"])
+    ).all()
     
     scanned_files = []
     
-    # Locate all PDF files
+    # 1. Check WeChat current month folder dynamically on Mac
+    wechat_mac_dir = get_wechat_current_month_dir()
+    if wechat_mac_dir:
+        logger.info(f"Scanning dynamic WeChat month folder: {wechat_mac_dir}")
+        for file in os.listdir(wechat_mac_dir):
+            if file.lower().endswith(".pdf"):
+                full_path = os.path.join(wechat_mac_dir, file)
+                if full_path not in [x[1] for x in scanned_files]:
+                    scanned_files.append((file, full_path, wechat_mac_dir))
+
+    # 2. Check other folders in WECHAT_DIRS
     for base_dir in WECHAT_DIRS:
         if not os.path.exists(base_dir):
             continue
         for file in os.listdir(base_dir):
             if file.lower().endswith(".pdf"):
                 full_path = os.path.join(base_dir, file)
-                if full_path not in scanned_files:
-                    scanned_files.append((file, full_path))
+                if full_path not in [x[1] for x in scanned_files]:
+                    scanned_files.append((file, full_path, base_dir))
 
-    for filename, filepath in scanned_files:
+    for filename, filepath, parent_dir in scanned_files:
         try:
             reader = pypdf.PdfReader(filepath)
             text = ""
             for page in reader.pages:
                 text += page.extract_text() or ""
             
-            # Extract USPS Tracking Number (usually a 22-digit number starting with 9)
-            digits_only = "".join(re.findall(r"\d", text))
-            tracking_match = re.search(r"9\d{21}", digits_only)
-            
+            # Extract tracking number (postal/Yanwen format UL155889460YP or USPS)
             tracking_number = ""
-            if tracking_match:
-                tracking_number = tracking_match.group(0)
+            postal_match = re.search(r"\b([A-Z]{2}\d{9}[A-Z]{2})\b", text.upper())
+            if postal_match:
+                tracking_number = postal_match.group(1)
             else:
-                grouped_match = re.search(r"\b(?:\d\s*){22}\b", text)
-                if grouped_match:
-                    tracking_number = "".join(grouped_match.group(0).split())
+                candidates = re.findall(r"\b9\d[\s\d]{20,28}\d\b", text)
+                for cand in candidates:
+                    digits = "".join(re.findall(r"\d", cand))
+                    if len(digits) == 22:
+                        tracking_number = digits
+                        break
+
+                if not tracking_number:
+                    # Fallback to general 22 digit spaced pattern
+                    grouped_match = re.search(r"\b(?:\d\s*){22}\b", text)
+                    if grouped_match:
+                        tracking_number = "".join(grouped_match.group(0).split())
+
+            formatted_tracking = tracking_number
+            if len(tracking_number) == 22:
+                formatted_tracking = " ".join([
+                    tracking_number[0:4], tracking_number[4:8], tracking_number[8:12],
+                    tracking_number[12:16], tracking_number[16:20], tracking_number[20:22]
+                ])
+
+            # Find customer matching name
+            matched_order_id = None
+            matched_order_num = None
+            customer_name_found = ""
+            confidence = "none"
+            is_excel_match = False
+            excel_info = None
             
+            text_lower = text.lower()
+            for order in unfulfilled_orders:
+                cust_lower = order.customer_name.lower()
+                if cust_lower in text_lower:
+                    matched_order_id = order.id
+                    matched_order_num = order.order_id
+                    customer_name_found = order.customer_name
+                    confidence = "high"
+                    break
+            
+            if not matched_order_id:
+                lines = [l.strip() for l in text.split("\n") if l.strip()]
+                name_candidate = ""
+                for i, line in enumerate(lines):
+                    if line.upper().rstrip(":") == "TO" and i + 1 < len(lines):
+                        name_candidate = lines[i+1].strip()
+                        if len(name_candidate.split()) >= 2 and not any(char.isdigit() for char in name_candidate):
+                            break
+                        else:
+                            name_candidate = ""
+                if name_candidate:
+                    customer_name_found = name_candidate
+                    confidence = "unmatched"
+                else:
+                    for line in lines:
+                        if line.isupper() and len(line.split()) >= 2 and "DEPT" not in line and "USPS" not in line and "GROUND" not in line:
+                            customer_name_found = line.title()
+                            confidence = "unmatched"
+                            break
+
+            matches.append({
+                "filename": filename,
+                "filepath": filepath,
+                "extracted_tracking": tracking_number,
+                "formatted_tracking": formatted_tracking,
+                "extracted_customer": customer_name_found,
+                "matched_order_id": matched_order_id,
+                "matched_order_number": matched_order_num,
+                "confidence": confidence
+            })
+            
+        except Exception as e:
+            logger.error(f"Failed to scan PDF {filename}: {e}")
+            
+    return matches
+
+
+@router.post("/wechat/upload")
+async def upload_wechat_pdfs(files: List[UploadFile] = File(...), db: Session = Depends(get_db)):
+    """
+    Upload and parse WeChat PDF shipping labels.
+    Extract customer name and tracking number to match with database orders.
+    """
+    matches = []
+    unfulfilled_orders = db.query(Order).filter(
+        Order.shipping_status.in_(["placed", "placed order", "in transit"])
+    ).all()
+
+    for file in files:
+        filename = file.filename
+        try:
+            file_content = await file.read()
+            pdf_file = io.BytesIO(file_content)
+            
+            reader = pypdf.PdfReader(pdf_file)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() or ""
+            
+            # Extract tracking number (postal/Yanwen format UL155889460YP or USPS)
+            tracking_number = ""
+            postal_match = re.search(r"\b([A-Z]{2}\d{9}[A-Z]{2})\b", text.upper())
+            if postal_match:
+                tracking_number = postal_match.group(1)
+            else:
+                candidates = re.findall(r"\b9\d[\s\d]{20,28}\d\b", text)
+                for cand in candidates:
+                    digits = "".join(re.findall(r"\d", cand))
+                    if len(digits) == 22:
+                        tracking_number = digits
+                        break
+
+                if not tracking_number:
+                    # Fallback to general 22 digit spaced pattern
+                    grouped_match = re.search(r"\b(?:\d\s*){22}\b", text)
+                    if grouped_match:
+                        tracking_number = "".join(grouped_match.group(0).split())
+
             formatted_tracking = tracking_number
             if len(tracking_number) == 22:
                 formatted_tracking = " ".join([
@@ -717,15 +850,27 @@ def scan_wechat_pdfs(db: Session = Depends(get_db)):
             
             if not matched_order_id:
                 lines = [l.strip() for l in text.split("\n") if l.strip()]
-                for line in lines:
-                    if line.isupper() and len(line.split()) >= 2 and "DEPT" not in line and "USPS" not in line and "GROUND" not in line:
-                        customer_name_found = line.title()
-                        confidence = "unmatched"
-                        break
+                name_candidate = ""
+                for i, line in enumerate(lines):
+                    if line.upper().rstrip(":") == "TO" and i + 1 < len(lines):
+                        name_candidate = lines[i+1].strip()
+                        if len(name_candidate.split()) >= 2 and not any(char.isdigit() for char in name_candidate):
+                            break
+                        else:
+                            name_candidate = ""
+                if name_candidate:
+                    customer_name_found = name_candidate
+                    confidence = "unmatched"
+                else:
+                    for line in lines:
+                        if line.isupper() and len(line.split()) >= 2 and "DEPT" not in line and "USPS" not in line and "GROUND" not in line:
+                            customer_name_found = line.title()
+                            confidence = "unmatched"
+                            break
 
             matches.append({
                 "filename": filename,
-                "filepath": filepath,
+                "filepath": "uploaded",
                 "extracted_tracking": tracking_number,
                 "formatted_tracking": formatted_tracking,
                 "extracted_customer": customer_name_found,
@@ -735,7 +880,17 @@ def scan_wechat_pdfs(db: Session = Depends(get_db)):
             })
             
         except Exception as e:
-            logger.error(f"Failed to scan PDF {filename}: {e}")
+            logger.error(f"Failed to scan uploaded PDF {filename}: {e}")
+            matches.append({
+                "filename": filename,
+                "filepath": "uploaded",
+                "extracted_tracking": "",
+                "formatted_tracking": "",
+                "extracted_customer": "Error parsing file",
+                "matched_order_id": None,
+                "matched_order_number": None,
+                "confidence": "none"
+            })
             
     return matches
 

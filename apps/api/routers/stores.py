@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -17,10 +19,10 @@ class StoreCreate(BaseModel):
 
 
 class StoreUpdate(BaseModel):
-    name: str | None = None
-    url: str | None = None
-    api_key: str | None = None
-    api_secret: str | None = None
+    name: Optional[str] = None
+    url: Optional[str] = None
+    api_key: Optional[str] = None
+    api_secret: Optional[str] = None
 
 
 @router.get("")

@@ -51,6 +51,31 @@ interface RawOrder {
   created_at: string;
 }
 
+const formatCreatedDate = (dateStr: string) => {
+  if (!dateStr) return "—";
+  try {
+    const dateObj = new Date(dateStr);
+    if (isNaN(dateObj.getTime())) {
+      const parts = dateStr.split("T");
+      const datePart = parts[0] || "";
+      const dateSubparts = datePart.split("-");
+      if (dateSubparts.length === 3) {
+        const y = dateSubparts[0].slice(-2);
+        const m = dateSubparts[1];
+        const d = dateSubparts[2];
+        return `${d}/${m}/${y}`;
+      }
+      return dateStr;
+    }
+    const day = String(dateObj.getDate()).padStart(2, "0");
+    const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+    const year = String(dateObj.getFullYear()).slice(-2);
+    return `${day}/${month}/${year}`;
+  } catch (e) {
+    return dateStr;
+  }
+};
+
 export default function OrdersPage() {
   const [rawOrders, setRawOrders] = useState<RawOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -564,8 +589,8 @@ export default function OrdersPage() {
                   />
                 </th>
                 <th style={{ padding: "14px 12px", textAlign: "left" }}>Store ID</th>
+                <th style={{ padding: "14px 12px", textAlign: "center", width: "110px" }}>Created At</th>
                 <th style={{ padding: "14px 12px", textAlign: "left" }}>Order ID</th>
-                <th style={{ padding: "14px 12px", textAlign: "left" }}>Order Name</th>
                 <th style={{ padding: "14px 12px", textAlign: "left" }}>Customer Name</th>
                 <th style={{ padding: "14px 12px", textAlign: "left" }}>Customer Addr</th>
                 <th style={{ padding: "14px 12px", textAlign: "left" }}>Email</th>
@@ -576,7 +601,6 @@ export default function OrdersPage() {
                 <th style={{ padding: "14px 12px", textAlign: "left", width: "100px" }}>Val</th>
                 <th style={{ padding: "14px 12px", textAlign: "right" }}>Revenue</th>
                 <th style={{ padding: "14px 12px", textAlign: "right", width: "100px" }}>Cost</th>
-                <th style={{ padding: "14px 12px", textAlign: "center", width: "140px" }}>Created At</th>
                 <th style={{ padding: "14px 12px", textAlign: "center" }}>Status</th>
                 <th style={{ padding: "14px 12px", textAlign: "left" }}>Tracking number</th>
                 <th style={{ padding: "14px 12px", textAlign: "center" }}>Email sent</th>
@@ -622,10 +646,12 @@ export default function OrdersPage() {
                     <td style={{ padding: "12px", fontWeight: "bold", color: "var(--text-primary)", verticalAlign: "middle" }}>
                       {order.store_id.replace(" WooCommerce", "").replace(" ShopBase", "")}
                     </td>
+                    {/* Created At */}
+                    <td style={{ padding: "12px", fontSize: "12px", color: "var(--text-primary)", textAlign: "center", verticalAlign: "middle", fontWeight: "500" }}>
+                      {formatCreatedDate(order.created_at)}
+                    </td>
                     {/* Order ID */}
                     <td style={{ padding: "12px", color: "var(--text-primary)", verticalAlign: "middle" }}>{order.order_id}</td>
-                    {/* Order Name */}
-                    <td style={{ padding: "12px", fontWeight: "bold", color: "var(--text-primary)", verticalAlign: "middle" }}>{order.order_name}</td>
                     {/* Customer Name */}
                     <td style={{ padding: "12px", fontWeight: "500", color: "var(--text-primary)", verticalAlign: "middle" }}>{order.customer_name}</td>
                     {/* Customer Addr */}
@@ -758,22 +784,6 @@ export default function OrdersPage() {
                           </div>
                         ))}
                       </div>
-                    </td>
-                    
-                    {/* Exposed Created At (Full Date and Time) */}
-                    <td style={{ padding: "12px", fontSize: "11px", color: "var(--text-secondary)", textAlign: "center", verticalAlign: "middle" }}>
-                      {order.created_at ? (() => {
-                        const dateStr = order.created_at;
-                        const parts = dateStr.split("T");
-                        const datePart = parts[0] || "";
-                        const timePart = parts[1] ? parts[1].slice(0, 5) : "";
-                        return (
-                          <div style={{ lineHeight: "1.4" }}>
-                            <div style={{ fontWeight: "bold" }}>{datePart}</div>
-                            <div style={{ color: "var(--text-muted)", fontSize: "10px" }}>{timePart}</div>
-                          </div>
-                        );
-                      })() : "—"}
                     </td>
                     
                     {/* status pill matching image */}

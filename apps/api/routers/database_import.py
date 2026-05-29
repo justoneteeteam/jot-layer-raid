@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -119,12 +121,12 @@ def list_players(team_id: int, db: Session = Depends(get_db)):
 
 
 class PlayerUpdate(BaseModel):
-    name: str | None = None
-    display_name: str | None = None
-    number: int | None = None
-    type: str | None = None
-    group: str | None = None
-    is_active: bool | None = None
+    name: Optional[str] = None
+    display_name: Optional[str] = None
+    number: Optional[int] = None
+    type: Optional[str] = None
+    group: Optional[str] = None
+    is_active: Optional[bool] = None
 
 
 @router.put("/players/{player_id}")
