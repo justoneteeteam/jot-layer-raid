@@ -898,7 +898,7 @@ def export_supplier_excel(ids: str = Query(..., description="Comma separated ord
     return FileResponse(
         export_path, 
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        filename=f"supplier_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        filename=f"{datetime.now().strftime('%d-%m')} Supplier export.xlsx"
     )
 
 
