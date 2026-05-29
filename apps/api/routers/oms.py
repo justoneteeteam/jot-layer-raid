@@ -770,7 +770,7 @@ def export_supplier_excel(ids: str = Query(..., description="Comma separated ord
     Downloads the product image and embeds the actual thumbnail inside the Excel cell.
     """
     order_ids = [int(x) for x in ids.split(",") if x.strip()]
-    orders = db.query(Order).filter(Order.id.in_(order_ids)).all()
+    orders = db.query(Order).filter(Order.id.in_(order_ids)).order_by(Order.created_at.desc()).all()
     
     wb = Workbook()
     ws = wb.active
