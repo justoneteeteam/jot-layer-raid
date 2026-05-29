@@ -819,6 +819,9 @@ def export_supplier_excel(ids: str = Query(..., description="Comma separated ord
     for idx, order in enumerate(orders, 2):
         ws.row_dimensions[idx].height = 85  # Height for images
         
+        # Mark order as "placed order"
+        order.shipping_status = "placed order"
+        
         # Shorten store name to first letter (e.g. Vulius -> V), and strip '#' from order ID
         store_letter = order.store_id[0].upper() if order.store_id else ""
         raw_order_id = order.order_id.replace("#", "").strip() if order.order_id else ""
@@ -889,6 +892,9 @@ def export_supplier_excel(ids: str = Query(..., description="Comma separated ord
             except Exception as e:
                 logger.error(f"Failed to embed image for order {order.id}: {e}")
                 ws.cell(row=idx, column=5, value="[No Image]").alignment = center_align
+
+    # Commit shipping status updates to database
+    db.commit()
 
     # Save to temp file
     export_fd, export_path = tempfile.mkstemp(suffix=".xlsx")
