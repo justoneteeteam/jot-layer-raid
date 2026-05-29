@@ -1202,6 +1202,75 @@ def reply_to_ticket(ticket_id: int, reply: dict, db: Session = Depends(get_db)):
     return {"status": "ok", "message": f"Reply successfully sent to {ticket.customer_email} and status updated to {status}."}
 
 
+@router.post("/webhook/email/inbound")
+def inbound_support_email_webhook(payload: dict, secret: Optional[str] = None, db: Session = Depends(get_db)):
+    """
+    Inbound support email webhook receiver.
+    Parses incoming support emails sent to customer@vulius.com or customer@justonetee.org,
+    dynamically thread-matches active tickets or spawns new support ticket rows.
+    """
+    # Simple security token validation
+    expected_secret = os.environ.get("INBOUND_EMAIL_SECRET", "JOT_INGESTION_SECRET")
+    if secret != expected_secret:
+        logger.warning(f"Unauthorized inbound email webhook attempt. Invalid secret token: {secret}")
+        raise HTTPException(status_code=401, detail="Unauthorized: Invalid ingestion secret.")
+
+    sender = payload.get("sender")
+    sender_name = payload.get("sender_name") or (sender.split("@")[0] if sender else "Customer")
+    recipient = payload.get("recipient")
+    subject = payload.get("subject", "Support Inquiry")
+    body_text = payload.get("body_text", "")
+
+    if not sender or not body_text:
+        raise HTTPException(status_code=400, detail="Invalid payload: Sender and body_text are required.")
+
+    # Try to find an existing active support ticket from this email (open or pending status)
+    existing_ticket = db.query(Ticket).filter(
+        Ticket.customer_email == sender,
+        Ticket.status.in_(["open", "pending"])
+    ).order_by(Ticket.created_at.desc()).first()
+
+    if existing_ticket:
+        # Append the message to the replies list of the existing ticket thread
+        replies_list = []
+        if existing_ticket.replies:
+            try:
+                replies_list = json.loads(existing_ticket.replies)
+            except Exception:
+                pass
+        
+        continuation_msg = f"[Customer Reply] {body_text}"
+        replies_list.append(continuation_msg)
+        existing_ticket.replies = json.dumps(replies_list)
+        existing_ticket.status = "open"
+        db.commit()
+        logger.info(f"Appended customer inbound email to existing support ticket ID {existing_ticket.id}.")
+        return {
+            "status": "success",
+            "message": f"Appended message to active support ticket ID {existing_ticket.id}.",
+            "ticket_id": existing_ticket.id
+        }
+    else:
+        # Create a new support ticket
+        new_ticket = Ticket(
+            customer_name=sender_name,
+            customer_email=sender,
+            subject=subject,
+            message=body_text,
+            status="open",
+            replies="[]"
+        )
+        db.add(new_ticket)
+        db.commit()
+        db.refresh(new_ticket)
+        logger.info(f"Created new support ticket ID {new_ticket.id} from customer inbound email.")
+        return {
+            "status": "success",
+            "message": f"Successfully created new support ticket ID {new_ticket.id}.",
+            "ticket_id": new_ticket.id
+        }
+
+
 # ==========================================
 # 7. EMAIL SETTINGS & ORDER UPDATE ENDPOINTS
 # ==========================================
