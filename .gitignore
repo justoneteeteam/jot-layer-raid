@@ -50,3 +50,5 @@ test_r2.py
 settings.json
 trigger_test_job.py
 run_production_test_end_to_end.py
+*.db
+

@@ -4,10 +4,11 @@ import re
 import json
 import tempfile
 import logging
+import html
 from datetime import datetime, timezone
 from typing import List, Optional
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -150,6 +151,40 @@ def actual_send_email(to_email: str, subject: str, body_text: str, custom_html: 
             return False
     except Exception as e:
         logger.error(f"Exception sending Cloudflare email to {to_email}: {e}")
+        return False
+
+
+def send_telegram_notification(message: str) -> bool:
+    """
+    Sends an HTML-formatted message to the Telegram channel specified in environment variables.
+    Fails gracefully and silently logs warnings if environment variables are not set or if sending fails.
+    Uses httpx for the POST request.
+    """
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    
+    if not token or not chat_id:
+        logger.warning("Telegram configuration missing (TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID). Skipping notification.")
+        return False
+        
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {
+        "chat_id": chat_id,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }
+    
+    try:
+        response = httpx.post(url, json=payload, timeout=5.0)
+        if response.status_code == 200:
+            logger.info("Telegram notification successfully dispatched.")
+            return True
+        else:
+            logger.error(f"Telegram API returned error status {response.status_code}: {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"Exception trying to send Telegram notification: {e}")
         return False
 
 
@@ -1128,7 +1163,12 @@ def reply_to_ticket(ticket_id: int, reply: dict, db: Session = Depends(get_db)):
 
 
 @router.post("/webhook/email/inbound")
-def inbound_support_email_webhook(payload: dict, secret: Optional[str] = None, db: Session = Depends(get_db)):
+def inbound_support_email_webhook(
+    payload: dict,
+    secret: Optional[str] = None,
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db)
+):
     """
     Inbound support email webhook receiver.
     Parses incoming support emails sent to customer@vulius.com or customer@justonetee.org,
@@ -1171,6 +1211,29 @@ def inbound_support_email_webhook(payload: dict, secret: Optional[str] = None, d
         existing_ticket.status = "open"
         db.commit()
         logger.info(f"Appended customer inbound email to existing support ticket ID {existing_ticket.id}.")
+        
+        # Send Telegram Channel Notification
+        escaped_id = html.escape(str(existing_ticket.id))
+        escaped_name = html.escape(sender_name)
+        escaped_email = html.escape(sender)
+        escaped_subject = html.escape(subject)
+        
+        snippet = body_text[:300] + ("..." if len(body_text) > 300 else "")
+        escaped_snippet = html.escape(snippet)
+        
+        telegram_message = (
+            f"💬 <b>[Ticket #{escaped_id} Update - Customer Reply]</b>\n"
+            f"<b>From:</b> {escaped_name} ({escaped_email})\n"
+            f"<b>Subject:</b> {escaped_subject}\n\n"
+            f"<blockquote>{escaped_snippet}</blockquote>\n\n"
+            f"👉 <a href=\"https://product.justonetee.org/oms/tickets\">Open Support Dashboard</a>"
+        )
+        
+        if background_tasks:
+            background_tasks.add_task(send_telegram_notification, telegram_message)
+        else:
+            send_telegram_notification(telegram_message)
+
         return {
             "status": "success",
             "message": f"Appended message to active support ticket ID {existing_ticket.id}.",
@@ -1190,6 +1253,29 @@ def inbound_support_email_webhook(payload: dict, secret: Optional[str] = None, d
         db.commit()
         db.refresh(new_ticket)
         logger.info(f"Created new support ticket ID {new_ticket.id} from customer inbound email.")
+        
+        # Send Telegram Channel Notification
+        escaped_id = html.escape(str(new_ticket.id))
+        escaped_name = html.escape(sender_name)
+        escaped_email = html.escape(sender)
+        escaped_subject = html.escape(subject)
+        
+        snippet = body_text[:300] + ("..." if len(body_text) > 300 else "")
+        escaped_snippet = html.escape(snippet)
+        
+        telegram_message = (
+            f"📥 <b>[New Support Ticket #{escaped_id}]</b>\n"
+            f"<b>From:</b> {escaped_name} ({escaped_email})\n"
+            f"<b>Subject:</b> {escaped_subject}\n\n"
+            f"<blockquote>{escaped_snippet}</blockquote>\n\n"
+            f"👉 <a href=\"https://product.justonetee.org/oms/tickets\">Open Support Dashboard</a>"
+        )
+        
+        if background_tasks:
+            background_tasks.add_task(send_telegram_notification, telegram_message)
+        else:
+            send_telegram_notification(telegram_message)
+
         return {
             "status": "success",
             "message": f"Successfully created new support ticket ID {new_ticket.id}.",
@@ -1338,6 +1424,7 @@ def resend_order(order_id: str, db: Session = Depends(get_db)):
 def woocommerce_order_created_webhook(
     payload: dict,
     store: Optional[str] = None,
+    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db)
 ):
     """
@@ -1456,6 +1543,7 @@ def woocommerce_order_created_webhook(
 
     email_dispatched = False
     items_html = ""
+    telegram_items_list = []
 
     for item in line_items:
         product_name = item.get("name", "Jersey Mockup")
@@ -1538,6 +1626,20 @@ def woocommerce_order_created_webhook(
             synced_at=datetime.now(timezone.utc)
         )
         db.add(new_order)
+
+        # Build item details for Telegram
+        item_summary = f"• {item.get('quantity', 1)}x {html.escape(product_name)}"
+        item_details = []
+        if size_val:
+            item_details.append(f"Size: {html.escape(size_val)}")
+        if name_val:
+            item_details.append(f"Custom Name: {html.escape(name_val)}")
+        if number_val:
+            item_details.append(f"Custom Number: {html.escape(number_val)}")
+            
+        if item_details:
+            item_summary += f"\n  <i>" + " | ".join(item_details) + "</i>"
+        telegram_items_list.append(item_summary)
 
         # Build clean dynamic row for this item in the HTML template
         items_html += f"""
@@ -1679,6 +1781,34 @@ def woocommerce_order_created_webhook(
             email_dispatched = True
 
     db.commit()
+
+    # Dispatch Telegram Notification for new order
+    try:
+        escaped_order_id = html.escape(str(order_id))
+        escaped_store_number = html.escape(str(payload.get("number") or order_id))
+        escaped_store_id = html.escape(str(resolved_store_id))
+        escaped_customer_name = html.escape(str(customer_name))
+        escaped_customer_email = html.escape(str(customer_email))
+        escaped_total = html.escape(str(payload.get("total", "84.00")))
+        telegram_items_str = "\n".join(telegram_items_list)
+
+        telegram_message = (
+            f"🛍️ <b>[New Order Received]</b>\n"
+            f"<b>Order ID:</b> #{escaped_order_id} ({escaped_store_number})\n"
+            f"<b>Store:</b> {escaped_store_id}\n"
+            f"<b>Customer:</b> {escaped_customer_name} ({escaped_customer_email})\n"
+            f"<b>Total Revenue:</b> ${escaped_total}\n\n"
+            f"<b>Purchased Items:</b>\n"
+            f"{telegram_items_str}\n\n"
+            f"👉 <a href=\"https://product.justonetee.org/oms\">Open Logistics Dashboard</a>"
+        )
+
+        if background_tasks:
+            background_tasks.add_task(send_telegram_notification, telegram_message)
+        else:
+            send_telegram_notification(telegram_message)
+    except Exception as te:
+        logger.error(f"Error preparing Telegram order notification: {te}")
 
     if email_dispatched:
         saved_orders = db.query(Order).filter(Order.order_id == order_id).all()
