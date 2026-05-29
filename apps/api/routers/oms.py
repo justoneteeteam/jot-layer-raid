@@ -1565,8 +1565,9 @@ def woocommerce_order_created_webhook(
         </tr>
         """
 
-    # 3. Dispatch premium HTML confirmation email once per webhook event
-    if auto_reply_enabled and customer_email:
+    # 3. Dispatch premium HTML confirmation email once per webhook event (only if store is Vulius)
+    should_send_email = (store_key == "vulius")
+    if auto_reply_enabled and customer_email and should_send_email:
         tracking_str = tracking_num if tracking_num else "Awaiting carrier scanning processing"
         
         # Plain text fallback body
