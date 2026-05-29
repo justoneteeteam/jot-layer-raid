@@ -52,6 +52,53 @@ const formatTimelineDate = (dateStr: string) => {
   }
 };
 
+const parseReply = (rawReply: string) => {
+  let sender = "👤 Support Agent";
+  let timestamp = "";
+  let message = rawReply;
+  let align = "flex-end";
+  let bg = "var(--accent-light)";
+  let border = "1px solid var(--accent)";
+  let textColor = "var(--text-primary)";
+  let borderRadius = "12px 12px 0px 12px";
+
+  if (rawReply.startsWith("[Customer Reply")) {
+    sender = "👤 Customer";
+    align = "flex-start";
+    bg = "var(--bg-secondary)";
+    border = "1px solid var(--border-default)";
+    borderRadius = "12px 12px 12px 0px";
+    
+    const match = rawReply.match(/^\[Customer Reply\s*(?:\|\s*([^\]]+))?\]\s*([\s\S]*)/);
+    if (match) {
+      timestamp = match[1] || "";
+      message = match[2] || "";
+    }
+  } else if (rawReply.startsWith("[Support Agent")) {
+    sender = "👤 Support Agent";
+    align = "flex-end";
+    bg = "var(--accent-light)";
+    border = "1px solid var(--accent)";
+    borderRadius = "12px 12px 0px 12px";
+    
+    const match = rawReply.match(/^\[Support Agent\s*(?:\|\s*([^\]]+))?\]\s*([\s\S]*)/);
+    if (match) {
+      timestamp = match[1] || "";
+      message = match[2] || "";
+    }
+  } else if (rawReply.includes("[Instant AI Update]")) {
+    sender = "🤖 JOT Logistics AI Assistant";
+    align = "flex-end";
+    bg = "#f0fdf4";
+    border = "1px solid #bbf7d0";
+    textColor = "#166534";
+    borderRadius = "12px 12px 0px 12px";
+    message = rawReply.replace("[Instant AI Update]", "").trim();
+  }
+
+  return { sender, timestamp, message, align, bg, border, textColor, borderRadius };
+};
+
 export default function EmailTicketsPage() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
@@ -303,27 +350,32 @@ export default function EmailTicketsPage() {
 
               {/* Parsed replies thread */}
               {getTicketReplies(activeTicket).map((reply, i) => {
-                const isAuto = reply.includes("[Instant AI Update]");
+                const parsed = parseReply(reply);
                 return (
                   <div
                     key={i}
                     style={{
-                      alignSelf: "flex-end",
+                      alignSelf: parsed.align as any,
                       maxWidth: "85%",
-                      background: isAuto ? "#f0fdf4" : "var(--accent-light)",
-                      border: isAuto ? "1px solid #bbf7d0" : "1px solid var(--accent)",
+                      background: parsed.bg,
+                      border: parsed.border,
                       padding: "14px 16px",
-                      borderRadius: "12px 12px 0 12px",
-                      color: isAuto ? "#166534" : "var(--text-primary)",
+                      borderRadius: parsed.borderRadius,
+                      color: parsed.textColor,
                       fontSize: "14px",
                       lineHeight: "1.5",
                       whiteSpace: "pre-line"
                     }}
                   >
-                    <div style={{ fontSize: "10px", color: isAuto ? "#166534" : "var(--accent)", fontWeight: "bold", marginBottom: "4px", textTransform: "uppercase" }}>
-                      {isAuto ? "🤖 JOT Logistics AI Assistant" : "👤 Support Agent"}
+                    <div style={{ fontSize: "10px", color: parsed.textColor === "var(--text-primary)" ? "var(--text-secondary)" : parsed.textColor, fontWeight: "bold", marginBottom: "4px", textTransform: "uppercase", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px" }}>
+                      <span>{parsed.sender}</span>
+                      {parsed.timestamp && (
+                        <span style={{ fontSize: "9px", color: "var(--text-muted)", fontWeight: "normal" }}>
+                          {parsed.timestamp}
+                        </span>
+                      )}
                     </div>
-                    {reply}
+                    {parsed.message}
                   </div>
                 );
               })}

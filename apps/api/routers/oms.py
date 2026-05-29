@@ -1110,7 +1110,9 @@ def reply_to_ticket(ticket_id: int, reply: dict, db: Session = Depends(get_db)):
             
     reply_msg = reply.get("message", "")
     if reply_msg.strip():
-        replies_list.append(reply_msg)
+        now_time = datetime.now().strftime("%H:%M %d/%m")
+        formatted_reply = f"[Support Agent | {now_time}] {reply_msg}"
+        replies_list.append(formatted_reply)
         ticket.replies = json.dumps(replies_list)
         
         # Deliver live email via Cloudflare REST API
@@ -1162,7 +1164,8 @@ def inbound_support_email_webhook(payload: dict, secret: Optional[str] = None, d
             except Exception:
                 pass
         
-        continuation_msg = f"[Customer Reply] {body_text}"
+        now_time = datetime.now().strftime("%H:%M %d/%m")
+        continuation_msg = f"[Customer Reply | {now_time}] {body_text}"
         replies_list.append(continuation_msg)
         existing_ticket.replies = json.dumps(replies_list)
         existing_ticket.status = "open"
