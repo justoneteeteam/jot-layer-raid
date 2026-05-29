@@ -37,6 +37,21 @@ interface CustomerProfile {
   orders: OrderHistory[];
 }
 
+const formatTimelineDate = (dateStr: string) => {
+  if (!dateStr) return "";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    const hours = String(d.getHours()).padStart(2, "0");
+    const minutes = String(d.getMinutes()).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    return `${hours}:${minutes} ${day}/${month}`;
+  } catch (e) {
+    return dateStr;
+  }
+};
+
 export default function EmailTicketsPage() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(true);
@@ -281,6 +296,9 @@ export default function EmailTicketsPage() {
               {/* Customer Initial Question Bubble */}
               <div style={{ alignSelf: "flex-start", maxWidth: "85%", background: "var(--bg-secondary)", border: "1px solid var(--border-default)", padding: "14px 16px", borderRadius: "12px 12px 12px 0", color: "var(--text-primary)", fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-line" }}>
                 {activeTicket.message}
+                <div style={{ fontSize: "9px", color: "var(--text-muted)", textAlign: "right", marginTop: "6px" }}>
+                  {formatTimelineDate(activeTicket.created_at)}
+                </div>
               </div>
 
               {/* Parsed replies thread */}

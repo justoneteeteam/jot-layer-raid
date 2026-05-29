@@ -533,85 +533,8 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
         # (Astro mock seeding if requested)
         pass
 
-    # Seed initial tickets and trigger Auto-Replies
-    ticket_count = db.query(Ticket).count()
-    if ticket_count == 0:
-        mock_tickets = [
-            {
-                "customer_name": "Timothy Harris",
-                "customer_email": "timothy.harris@example.com",
-                "subject": "Size change request",
-                "message": "Hi JOT Support team,\n\nI ordered a size M jersey, but I realized I need a size L instead. Can you update my order before it ships?\n\nThanks!\nTimothy Harris",
-                "status": "open",
-                "created_at": datetime.now(timezone.utc)
-            },
-            {
-                "customer_name": "Jackie Ledezma",
-                "customer_email": "jackie.ledezma@example.com",
-                "subject": "Where is my tracking number?",
-                "message": "Hello support,\n\nI placed an order a few days ago but haven't received a tracking number yet. When will it ship?\n\nBest regards,\nJackie",
-                "status": "open",
-                "created_at": datetime.now(timezone.utc)
-            },
-            {
-                "customer_name": "Shelley Talbot",
-                "customer_email": "shelltalbot@gmail.com",
-                "subject": "Loving the custom design!",
-                "message": "Thank you for the super fast shipping! The custom jersey looks amazing and fits perfectly. The print is very professional!\n\nCheers,\nShelley",
-                "status": "resolved",
-                "created_at": datetime.now(timezone.utc)
-            }
-        ]
-        
-        email_settings = load_email_settings()
-        enabled = email_settings.get("auto_reply_enabled", True)
-        keywords_str = email_settings.get("keywords", "shipping status, tracking, track, status, where is my order")
-        keywords_list = [kw.strip().lower() for kw in keywords_str.split(",") if kw.strip()]
-        template_body = email_settings.get("template_body", "")
-
-        for mock_t in mock_tickets:
-            # Check keywords auto-reply rules
-            message_lower = mock_t["message"].lower()
-            subject_lower = mock_t["subject"].lower()
-            
-            matched = False
-            if enabled:
-                matched = any(kw in message_lower or kw in subject_lower for kw in keywords_list)
-                
-            replies_list = []
-            status_val = mock_t["status"]
-            
-            if matched and status_val == "open":
-                customer_order = db.query(Order).filter(Order.customer_email == mock_t["customer_email"]).first()
-                if customer_order:
-                    tracking_str = customer_order.tracking_number if customer_order.tracking_number else "Awaiting carrier scanning processing"
-                    order_id_val = customer_order.order_id
-                    ship_status_val = customer_order.shipping_status
-                    
-                    auto_reply_message = format_template(
-                        template_body,
-                        customer_name=mock_t["customer_name"],
-                        order_id=order_id_val,
-                        shipping_status=ship_status_val,
-                        tracking_number=tracking_str
-                    )
-                    replies_list.append(auto_reply_message)
-                    status_val = "resolved"
-                    
-                    # Send live email notification via Cloudflare REST API
-                    subject_str = email_settings.get("template_subject", "Logistics update regarding your order {order_id}").replace("{order_id}", order_id_val or "")
-                    actual_send_email(mock_t["customer_email"], subject_str, auto_reply_message)
-                    
-            new_ticket = Ticket(
-                customer_name=mock_t["customer_name"],
-                customer_email=mock_t["customer_email"],
-                subject=mock_t["subject"],
-                message=mock_t["message"],
-                status=status_val,
-                replies=json.dumps(replies_list),
-                created_at=mock_t["created_at"]
-            )
-            db.add(new_ticket)
+    # Seed initial tickets and trigger Auto-Replies (Disabled to keep database clean of mock data)
+    pass
 
     db.commit()
     return {"status": "ok", "synced_count": synced_count, "message": f"Successfully synced {synced_count} orders from {platform}."}

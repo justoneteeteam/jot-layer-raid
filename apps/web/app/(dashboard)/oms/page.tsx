@@ -76,6 +76,21 @@ const formatCreatedDate = (dateStr: string) => {
   }
 };
 
+const formatTimelineDate = (dateStr: string) => {
+  if (!dateStr) return "";
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    const hours = String(d.getHours()).padStart(2, "0");
+    const minutes = String(d.getMinutes()).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, "0");
+    return `${hours}:${minutes} ${day}/${month}`;
+  } catch (e) {
+    return dateStr;
+  }
+};
+
 export default function OrdersPage() {
   const [rawOrders, setRawOrders] = useState<RawOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1173,7 +1188,7 @@ export default function OrdersPage() {
                                 {ticket.message}
                               </div>
                               <div style={{ fontSize: "9px", color: "var(--text-muted)", textAlign: "right", marginTop: "6px" }}>
-                                {new Date(ticket.created_at).toLocaleString()}
+                                {formatTimelineDate(ticket.created_at)}
                               </div>
                             </div>
 

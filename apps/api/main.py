@@ -53,6 +53,14 @@ def _run_migrations():
             logger.info("mockup_templates table not found — will be created by create_all")
             logger.info(f"Tables found: {table_names}")
 
+        # ── Cleanup mock tickets & mock orders ──
+        if "tickets" in table_names:
+            conn.execute(text("DELETE FROM tickets WHERE customer_email LIKE '%@example.com' OR customer_email = 'shelltalbot@gmail.com'"))
+            logger.info("Cleaned up mock tickets from database.")
+        if "orders" in table_names:
+            conn.execute(text("DELETE FROM orders WHERE store_id LIKE 'MOCK_%' OR customer_email LIKE '%@example.com'"))
+            logger.info("Cleaned up mock orders from database.")
+
 _run_migrations()
 
 app = FastAPI(
