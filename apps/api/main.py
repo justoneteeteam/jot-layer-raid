@@ -53,6 +53,13 @@ def _run_migrations():
             logger.info("mockup_templates table not found — will be created by create_all")
             logger.info(f"Tables found: {table_names}")
 
+        # ── orders table: add tracking_email_sent ──
+        if "orders" in table_names:
+            existing = {c["name"] for c in inspector.get_columns("orders")}
+            if "tracking_email_sent" not in existing:
+                conn.execute(text("ALTER TABLE orders ADD COLUMN tracking_email_sent BOOLEAN DEFAULT FALSE"))
+                logger.info("Added orders.tracking_email_sent")
+
         # ── Cleanup mock tickets & mock orders ──
         if "tickets" in table_names:
             conn.execute(text("DELETE FROM tickets WHERE customer_email LIKE '%@example.com' OR customer_email = 'shelltalbot@gmail.com'"))

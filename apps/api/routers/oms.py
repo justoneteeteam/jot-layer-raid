@@ -154,6 +154,198 @@ def actual_send_email(to_email: str, subject: str, body_text: str, custom_html: 
         return False
 
 
+def send_tracking_number_email(order: Order, db: Session):
+    """
+    Sends a beautifully designed, branded HTML email announcement to the customer
+    when their order tracking number is added or updated.
+    """
+    if not order.customer_email:
+        logger.warning(f"Order #{order.order_id} has no customer email. Skipping tracking email.")
+        return False
+
+    email_settings = load_email_settings()
+    if not email_settings.get("auto_reply_enabled", True):
+        logger.info("Auto-reply is disabled in settings. Skipping tracking email.")
+        return False
+
+    # 1. Store/Brand identification
+    store_id_lower = (order.store_id or "").lower()
+    if "vulius" in store_id_lower:
+        resolved_store_id = "Vulius Store"
+        brand_name = "VULIUS"
+        header_html = """<!-- Premium Branded Logo Header -->
+                    <tr>
+                        <td style="background: #ffffff; padding: 32px; text-align: center; border-bottom: 2px solid #f1f5f9;">
+                            <img src="https://vulius.com/wp-content/uploads/2023/07/logo-vulius-01-1400x630.png" style="height: 55px; width: auto; max-width: 200px; display: inline-block; object-fit: contain;" alt="VULIUS Logo" />
+                            <p style="color: #64748b; margin: 8px 0 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em;">ORDER SHIPPED</p>
+                        </td>
+                    </tr>"""
+        footer_brand_text = "VULIUS Store"
+    else:
+        resolved_store_id = "WaiRaiders Store"
+        brand_name = "WaiRaiders"
+        header_html = """<!-- Premium Dark Gradient Header -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); padding: 40px 32px; text-align: center; border-bottom: 4px solid #f97316;">
+                            <h1 style="color: #ffffff; margin: 0 0 8px 0; font-size: 28px; font-weight: 800; letter-spacing: -0.05em; text-transform: uppercase;">WAIRAIDERS</h1>
+                            <p style="color: #94a3b8; margin: 0; font-size: 14px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.1em;">ORDER SHIPPED</p>
+                        </td>
+                    </tr>"""
+        footer_brand_text = "WaiRaiders Store"
+
+    tracking_num = (order.tracking_number or "").strip()
+    formatted_tracking = tracking_num
+    if len(tracking_num) == 22:
+        formatted_tracking = " ".join([
+            tracking_num[0:4], tracking_num[4:8], tracking_num[8:12],
+            tracking_num[12:16], tracking_num[16:20], tracking_num[20:22]
+        ])
+
+    subject_line = f"Great news! Your order #{order.order_id} has been shipped"
+    
+    # Variant styling
+    item_variant_str = ""
+    if order.variant:
+        variants = [v.strip() for v in order.variant.split(",") if v.strip()]
+        for v in variants:
+            item_variant_str += f"<span style='display:inline-block; margin-right:8px; margin-top:4px; padding:2px 6px; background:#f1f5f9; border-radius:4px; font-size:12px; color:#475569;'>{v}</span>"
+
+    # HTML Item summary row
+    img_url = order.product_image or "https://images.unsplash.com/photo-1540747737956-3787256af2db?w=200"
+    items_html = f"""
+    <tr style="border-bottom: 1px solid #f1f5f9;">
+        <td style="padding: 16px 0; vertical-align: middle;">
+            <table border="0" cellspacing="0" cellpadding="0">
+                <tr>
+                    <td style="width: 50px; height: 50px; border-radius: 8px; border: 1px solid #e2e8f0; overflow: hidden; padding: 0;">
+                        <img src="{img_url}" style="width: 50px; height: 50px; object-fit: cover; display: block;" />
+                    </td>
+                    <td style="padding-left: 12px; vertical-align: middle;">
+                        <div style="font-weight: 600; color: #1e293b; font-size: 14px; line-height: 1.4;">{order.product_name}</div>
+                        <div style="margin-top: 2px;">{item_variant_str}</div>
+                    </td>
+                </tr>
+            </table>
+        </td>
+        <td style="padding: 16px 0; text-align: center; color: #475569; font-size: 14px; vertical-align: middle;">x{order.quantity or 1}</td>
+        <td style="padding: 16px 0; text-align: right; font-weight: 600; color: #0f172a; font-size: 14px; vertical-align: middle;">${order.revenue or "84.00"}</td>
+    </tr>
+    """
+
+    # Build plain text body fallback
+    plain_text_body = f"""Hi {order.customer_name},
+
+Great news! Your customized jersey has been crafted and shipped.
+Your logistics shipping status is currently: IN TRANSIT.
+Tracking Number: {formatted_tracking}.
+
+You can track your package directly on 17track here:
+https://www.17track.net/en/track?nums={tracking_num}
+
+Thank you for shopping with us!
+{resolved_store_id} Support Team
+"""
+
+    # Build premium HTML tracking announcement email
+    html_envelope = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Shipped</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+    <table width="100%" border="0" cellspacing="0" cellpadding="0" style="background-color: #f8fafc; padding: 32px 16px;">
+        <tr>
+            <td align="center">
+                <table width="100%" style="max-width: 600px; background: #ffffff; border-radius: 20px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05), 0 2px 4px -2px rgb(0 0 0 / 0.05); border-collapse: separate;" border="0" cellspacing="0" cellpadding="0">
+                    
+                    {header_html}
+                    
+                    <!-- Content Area -->
+                    <tr>
+                        <td style="padding: 32px;">
+                            <p style="margin: 0 0 12px 0; font-size: 20px; font-weight: 700; color: #0f172a;">Your order is on the way, {order.customer_name}!</p>
+                            <p style="margin: 0 0 24px 0; font-size: 15px; color: #475569; line-height: 1.6;">Great news! Our production team has crafted your customized sports jersey, and it has been officially dispatched. Below is your shipment tracking details.</p>
+                            
+                            <!-- Reference Details Card -->
+                            <table width="100%" style="background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0; padding: 16px; margin-bottom: 24px;" border="0" cellspacing="0" cellpadding="0">
+                                <tr>
+                                    <td>
+                                        <div style="font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">ORDER ID</div>
+                                        <div style="font-size: 16px; color: #0f172a; font-weight: 700;">#{order.order_id}</div>
+                                    </td>
+                                    <td align="right">
+                                        <div style="font-size: 11px; color: #64748b; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;">SHIPPING STATUS</div>
+                                        <div style="font-size: 12px; color: #1e3a8a; background: #dbeafe; border-radius: 4px; padding: 2px 8px; font-weight: 600; display: inline-block; text-transform: uppercase;">IN TRANSIT</div>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Tracking Info Card -->
+                            <table width="100%" style="background: #f0fdf4; border-radius: 12px; border: 1px solid #bbf7d0; padding: 20px; margin-bottom: 32px;" border="0" cellspacing="0" cellpadding="0">
+                                <tr>
+                                    <td>
+                                        <h4 style="margin: 0 0 8px 0; font-size: 13px; font-weight: 700; color: #15803d; text-transform: uppercase; letter-spacing: 0.05em;">TRACKING NUMBER</h4>
+                                        <p style="margin: 0 0 16px 0; font-size: 18px; color: #166534; font-weight: 700; letter-spacing: 0.02em;">{formatted_tracking}</p>
+                                        <a href="https://www.17track.net/en/track?nums={tracking_num}" target="_blank" style="background: #16a34a; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 8px; font-weight: 700; font-size: 14px; display: inline-block; text-transform: uppercase; letter-spacing: 0.02em; text-align: center; box-shadow: 0 4px 6px -1px rgb(22 163 74 / 0.2);">
+                                            Track Package
+                                        </a>
+                                    </td>
+                                </tr>
+                            </table>
+
+                            <!-- Items Section -->
+                            <h3 style="margin: 0 0 12px 0; font-size: 15px; font-weight: 700; color: #0f172a; border-bottom: 2px solid #f1f5f9; padding-bottom: 8px; text-transform: uppercase; letter-spacing: 0.05em;">SHIPPED ITEM</h3>
+                            <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: 24px;">
+                                {items_html}
+                            </table>
+
+                            <!-- Delivery Address Card -->
+                            <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: 32px;">
+                                <tr>
+                                    <td style="background: #f8fafc; border-radius: 12px; border: 1px solid #e2e8f0; padding: 20px;">
+                                        <h4 style="margin: 0 0 8px 0; font-size: 13px; font-weight: 700; color: #0f172a; text-transform: uppercase; letter-spacing: 0.05em;">DELIVERY ADDRESS</h4>
+                                        <p style="margin: 0; font-size: 14px; color: #475569; line-height: 1.5; font-style: normal;">
+                                            <strong>{order.customer_name}</strong><br>
+                                            {order.customer_address}
+                                        </p>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    
+                    <!-- Footer -->
+                    <tr>
+                        <td style="background: #f8fafc; border-top: 1px solid #e2e8f0; padding: 24px 32px; text-align: center; color: #94a3b8; font-size: 12px; font-weight: 500; line-height: 1.5;">
+                            <p style="margin: 0 0 4px 0;">This email was automatically generated and sent to you by <strong>{footer_brand_text}</strong>.</p>
+                            <p style="margin: 0;">If you have any questions, please reply directly to this support email.</p>
+                        </td>
+                    </tr>
+                </table>
+            </td>
+        </tr>
+    </table>
+</body>
+</html>"""
+
+    result = actual_send_email(
+        order.customer_email,
+        subject_line,
+        plain_text_body,
+        custom_html=html_envelope
+    )
+    if result:
+        order.tracking_email_sent = True
+        db.commit()
+        logger.info(f"Tracking email successfully sent to {order.customer_email} for order #{order.order_id}")
+        return True
+    else:
+        logger.error(f"Failed to send tracking email to {order.customer_email} for order #{order.order_id}")
+        return False
+
+
 def send_telegram_notification(message: str) -> bool:
     """
     Sends an HTML-formatted message to the Telegram channel specified in environment variables.
@@ -910,6 +1102,9 @@ def sync_wechat_matches(updates: List[dict], db: Session = Depends(get_db)):
                 order.shipping_status = "in transit"  # Automatically set to in transit once matched!
                 updated_count += 1
                 
+                if not order.tracking_email_sent:
+                    send_tracking_number_email(order, db)
+                
     db.commit()
     return {"status": "ok", "updated_count": updated_count, "message": f"Successfully updated tracking for {updated_count} orders."}
 
@@ -1324,6 +1519,7 @@ def update_order_details(order_id: str, data: dict, db: Session = Depends(get_db
     customer_email = data.get("customer_email")
     
     for order in orders:
+        old_tracking = order.tracking_number
         if tracking_number is not None:
             order.tracking_number = tracking_number
         if shipping_status is not None:
@@ -1336,6 +1532,9 @@ def update_order_details(order_id: str, data: dict, db: Session = Depends(get_db
             order.customer_address = customer_address
         if customer_email is not None:
             order.customer_email = customer_email
+            
+        if tracking_number and tracking_number != old_tracking and not order.tracking_email_sent:
+            send_tracking_number_email(order, db)
             
     # If the user renamed the order_id itself, perform this rename after updating other fields
     if new_order_id is not None and new_order_id != order_id:

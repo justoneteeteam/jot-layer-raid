@@ -23,5 +23,6 @@ class Order(Base):
     shipping_status = Column(String, default="placed")  # placed, in transit, delivered, incident
     tracking_number = Column(String, nullable=True, index=True)
     email_sent = Column(Boolean, default=False)
+    tracking_email_sent = Column(Boolean, default=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     synced_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
