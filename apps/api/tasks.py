@@ -375,7 +375,17 @@ def execute_flow_step(self, flow_run_id: int, step_index: int):
                 return
 
             # Resolve sender branding configs
-            sender_config = db.query(EmailSenderIdentity).filter(EmailSenderIdentity.store_id == flow_run.store_id, EmailSenderIdentity.status == "active").first()
+            sender_config = None
+            try:
+                compiled_schema = json.loads(flow.compiled_schema_json)
+                sender_identity_id = compiled_schema.get("sender_identity_id")
+                if sender_identity_id:
+                    sender_config = db.query(EmailSenderIdentity).filter(EmailSenderIdentity.id == sender_identity_id).first()
+            except Exception as e:
+                logger.error(f"Error parsing sender_identity_id from flow compiled_schema: {e}")
+
+            if not sender_config:
+                sender_config = db.query(EmailSenderIdentity).filter(EmailSenderIdentity.store_id == flow_run.store_id, EmailSenderIdentity.status == "active").first()
             if not sender_config:
                 sender_config = db.query(EmailSenderIdentity).filter(EmailSenderIdentity.status == "active").first()
 

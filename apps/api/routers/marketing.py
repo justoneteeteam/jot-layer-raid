@@ -186,6 +186,7 @@ def create_or_update_flow(payload: dict, db: Session = Depends(get_db)):
     name = payload.get("name")
     trigger_event = payload.get("trigger_event")
     steps = payload.get("steps", []) # List of steps e.g. delay, suppression, send
+    sender_identity_id = payload.get("sender_identity_id")
 
     if not name or not trigger_event:
         raise HTTPException(status_code=400, detail="Name and trigger_event are required.")
@@ -199,7 +200,8 @@ def create_or_update_flow(payload: dict, db: Session = Depends(get_db)):
     # Compile schema structure
     compiled_schema = {
         "trigger": trigger_event,
-        "steps": steps
+        "steps": steps,
+        "sender_identity_id": sender_identity_id
     }
 
     if flow_id:
@@ -215,7 +217,7 @@ def create_or_update_flow(payload: dict, db: Session = Depends(get_db)):
     flow.store_id = store_id
     flow.name = name
     flow.trigger_event = trigger_event
-    flow.visual_schema_json = json.dumps({"steps": steps})
+    flow.visual_schema_json = json.dumps({"steps": steps, "sender_identity_id": sender_identity_id})
     flow.compiled_schema_json = json.dumps(compiled_schema)
     flow.is_active = payload.get("is_active", True)
 
