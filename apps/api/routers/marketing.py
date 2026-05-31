@@ -15,6 +15,7 @@ from models.suppression import Suppression
 from models.email_template import EmailTemplate
 from models.marketing_campaign import MarketingCampaign
 from models.email_event import EmailEvent
+from models.automation_flow import AutomationFlow
 
 from services.email_engine import get_email_provider
 from services.tracking import verify_tracking_link, generate_secure_tracking_link
@@ -172,6 +173,73 @@ def batch_sync_contacts(payload: dict, db: Session = Depends(get_db)):
 @router.get("/suppressions")
 def get_suppressions(db: Session = Depends(get_db)):
     return db.query(Suppression).all()
+
+# ── 3.5. AUTOMATION FLOWS CRUD ──
+@router.get("/flows")
+def get_flows(db: Session = Depends(get_db)):
+    return db.query(AutomationFlow).all()
+
+@router.post("/flows")
+def create_or_update_flow(payload: dict, db: Session = Depends(get_db)):
+    flow_id = payload.get("id")
+    store_id = payload.get("store_id", "WaiRaiders Store")
+    name = payload.get("name")
+    trigger_event = payload.get("trigger_event")
+    steps = payload.get("steps", []) # List of steps e.g. delay, suppression, send
+
+    if not name or not trigger_event:
+        raise HTTPException(status_code=400, detail="Name and trigger_event are required.")
+
+    # Validate steps structures
+    for step in steps:
+        stype = step.get("type")
+        if stype not in ("wait", "suppression_check", "send_email"):
+            raise HTTPException(status_code=400, detail=f"Invalid flow step type '{stype}'.")
+
+    # Compile schema structure
+    compiled_schema = {
+        "trigger": trigger_event,
+        "steps": steps
+    }
+
+    if flow_id:
+        flow = db.query(AutomationFlow).filter(AutomationFlow.id == flow_id).first()
+        if not flow:
+            raise HTTPException(status_code=404, detail="Flow not found.")
+        flow.version += 1
+    else:
+        flow = AutomationFlow()
+        db.add(flow)
+        flow.version = 1
+
+    flow.store_id = store_id
+    flow.name = name
+    flow.trigger_event = trigger_event
+    flow.visual_schema_json = json.dumps({"steps": steps})
+    flow.compiled_schema_json = json.dumps(compiled_schema)
+    flow.is_active = payload.get("is_active", True)
+
+    db.commit()
+    db.refresh(flow)
+    return {"status": "success", "message": "Automation flow saved successfully.", "flow": flow}
+
+@router.post("/flows/{flow_id}/toggle")
+def toggle_flow_state(flow_id: int, db: Session = Depends(get_db)):
+    flow = db.query(AutomationFlow).filter(AutomationFlow.id == flow_id).first()
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found.")
+    flow.is_active = not flow.is_active
+    db.commit()
+    return {"status": "success", "is_active": flow.is_active, "message": f"Flow status updated to {'enabled' if flow.is_active else 'disabled'}."}
+
+@router.delete("/flows/{flow_id}")
+def delete_flow(flow_id: int, db: Session = Depends(get_db)):
+    flow = db.query(AutomationFlow).filter(AutomationFlow.id == flow_id).first()
+    if not flow:
+        raise HTTPException(status_code=404, detail="Flow not found.")
+    db.delete(flow)
+    db.commit()
+    return {"status": "success", "message": "Automation flow successfully deleted."}
 
 
 # ── 4. CAMPAIGNS & DISPATCH ENGINE ──
