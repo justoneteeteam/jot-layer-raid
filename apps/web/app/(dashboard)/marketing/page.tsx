@@ -9,8 +9,9 @@ interface Campaign {
   name: string;
   subject: string;
   body_html: string;
-  status: "draft" | "sending" | "completed";
+  status: "draft" | "scheduled" | "sending" | "completed";
   sent_count: number;
+  scheduled_at?: string;
   created_at: string;
 }
 
@@ -31,47 +32,34 @@ interface Contact {
   consent_source: string;
 }
 
-interface SenderIdentity {
-  id?: number;
-  store_id: string;
-  provider: "cloudflare" | "resend" | "ses" | "smtp";
-  from_name: string;
-  from_email: string;
-  reply_to_email?: string;
-  domain: string;
-  status: "pending" | "verified" | "active" | "disabled";
-  provider_config_ref?: string;
-}
-
 export default function MarketingPage() {
   const [activeTab, setActiveTab] = useState<"campaigns" | "contacts" | "templates" | "senders">("campaigns");
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [senders, setSenders] = useState<SenderIdentity[]>([]);
   
-  // Modals and Forms
+  // Visual Campaign Builder states
   const [campaignModalOpen, setCampaignModalOpen] = useState(false);
-  const [newCampaign, setNewCampaign] = useState({ name: "", subject: "", body_html: "", store_id: "WaiRaiders Store" });
+  const [campaignName, setCampaignName] = useState("");
+  const [campaignSubject, setCampaignSubject] = useState("");
+  const [campaignTemplate, setCampaignTemplate] = useState<"promo" | "elegant" | "bold" | "custom">("promo");
   
+  // Custom template fields
+  const [campaignTitle, setCampaignTitle] = useState("🏈 WaiRaiders Jersey Special!");
+  const [campaignSubtitle, setCampaignSubtitle] = useState("Get 25% off our exclusive custom drops this weekend only.");
+  const [campaignBody, setCampaignBody] = useState("We are excited to share our latest premium custom NFL jersey mockups. Tailored with high-durability fabrics, bold colors, and customized lettering, these designs are ready to elevate your team spirit in style.");
+  const [campaignCtaText, setCampaignCtaText] = useState("🛍️ Shop Jersey Collection");
+  const [campaignCtaUrl, setCampaignCtaUrl] = useState("https://wairaiders.com/shop");
+  const [campaignAccentColor, setCampaignAccentColor] = useState("#0d9488");
+  const [campaignAudience, setCampaignAudience] = useState("all");
+  const [campaignSchedule, setCampaignSchedule] = useState<"now" | "later">("now");
+  const [campaignScheduledAt, setCampaignScheduledAt] = useState("");
+
   const [templateModalOpen, setTemplateModalOpen] = useState(false);
   const [newTemplate, setNewTemplate] = useState({ name: "", subject: "", body_html: "", store_id: "WaiRaiders Store" });
   
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [csvText, setCsvText] = useState("");
-
-  const [senderModalOpen, setSenderModalOpen] = useState(false);
-  const [editSenderId, setEditSenderId] = useState<number | null>(null);
-  const [newSender, setNewSender] = useState<SenderIdentity>({
-    store_id: "WaiRaiders Store",
-    provider: "cloudflare",
-    from_name: "",
-    from_email: "",
-    reply_to_email: "",
-    domain: "",
-    status: "active",
-    provider_config_ref: ""
-  });
   
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -105,20 +93,10 @@ export default function MarketingPage() {
     }
   };
 
-  const loadSenders = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/marketing/senders`);
-      if (res.ok) setSenders(await res.json());
-    } catch (err) {
-      console.error("Failed to load sender identities", err);
-    }
-  };
-
   useEffect(() => {
     loadCampaigns();
     loadTemplates();
     loadContacts();
-    loadSenders();
   }, []);
 
   const showStatus = (msg: string, type: "success" | "error") => {
@@ -127,22 +105,110 @@ export default function MarketingPage() {
     setTimeout(() => setMessage(""), 5000);
   };
 
+  const compileCampaignHtml = () => {
+    if (campaignTemplate === "custom") {
+      return campaignBody;
+    }
+    
+    if (campaignTemplate === "elegant") {
+      return `<div style="font-family: Georgia, serif; background: #faf9f6; padding: 40px 16px; margin: 0; color: #222222;">
+  <div style="max-width: 580px; margin: 0 auto; background: #ffffff; padding: 48px 32px; border: 1px solid #eae6df; border-radius: 4px;">
+    <div style="text-align: center; border-bottom: 2px solid #222222; padding-bottom: 24px; margin-bottom: 32px;">
+      <h1 style="margin: 0; font-size: 26px; font-weight: normal; letter-spacing: 0.05em; font-family: sans-serif; color: #111827;">✨ ${campaignTitle}</h1>
+      <p style="margin: 8px 0 0 0; font-size: 14px; font-style: italic; color: #666666;">${campaignSubtitle}</p>
+    </div>
+    <div style="line-height: 1.8; font-size: 15px; color: #334155;">
+      <p style="margin: 0 0 20px 0;">Dear {customer_name},</p>
+      <p style="margin: 0 0 24px 0; white-space: pre-line;">${campaignBody}</p>
+      
+      <div style="text-align: center; margin: 40px 0;">
+        <a href="${campaignCtaUrl}" style="background: #222222; color: #ffffff; text-decoration: none; padding: 12px 32px; font-weight: bold; font-size: 13px; display: inline-block; letter-spacing: 0.1em; text-transform: uppercase; border-radius: 4px;">${campaignCtaText}</a>
+      </div>
+    </div>
+  </div>
+</div>`;
+    }
+
+    if (campaignTemplate === "bold") {
+      return `<div style="font-family: sans-serif; background: #fef2f2; padding: 32px 16px; margin: 0;">
+  <div style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; border: 2px solid #ef4444; overflow: hidden; box-shadow: 0 4px 12px rgba(239,68,68,0.08);">
+    <div style="background: #ef4444; padding: 32px 24px; text-align: center; color: #ffffff;">
+      <h1 style="margin: 0; font-size: 24px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em;">🔥 ${campaignTitle}</h1>
+      <p style="margin: 8px 0 0 0; font-size: 14px; font-weight: bold; opacity: 0.95;">${campaignSubtitle}</p>
+    </div>
+    <div style="padding: 32px 24px; color: #1e293b; line-height: 1.6; font-size: 14px;">
+      <p style="margin: 0 0 20px 0; font-weight: bold;">Attention {customer_name},</p>
+      <p style="margin: 0 0 24px 0; white-space: pre-line;">${campaignBody}</p>
+      
+      <div style="text-align: center; margin: 32px 0;">
+        <a href="${campaignCtaUrl}" style="background: #ef4444; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 6px; font-weight: bold; font-size: 14px; display: inline-block; text-transform: uppercase; box-shadow: 0 4px 6px rgba(239,68,68,0.2);">${campaignCtaText}</a>
+      </div>
+    </div>
+  </div>
+</div>`;
+    }
+
+    // Default: classic sports brand promo
+    return `<div style="font-family: sans-serif; background: #f8fafc; padding: 32px 16px; margin: 0;">
+  <div style="max-width: 600px; margin: 0 auto; background: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);">
+    <div style="background: ${campaignAccentColor}; padding: 32px 24px; text-align: center; color: #ffffff;">
+      <h1 style="margin: 0; font-size: 26px; font-weight: bold;">🏈 ${campaignTitle}</h1>
+      <p style="margin: 8px 0 0 0; font-size: 15px; opacity: 0.95;">${campaignSubtitle}</p>
+    </div>
+    <div style="padding: 32px 24px; color: #334155; line-height: 1.6; font-size: 14px;">
+      <p style="margin: 0 0 20px 0;">Hello {customer_name},</p>
+      <p style="margin: 0 0 24px 0; white-space: pre-line;">${campaignBody}</p>
+      
+      <div style="text-align: center; margin: 32px 0;">
+        <a href="${campaignCtaUrl}" style="background: ${campaignAccentColor}; color: #ffffff; text-decoration: none; padding: 12px 28px; border-radius: 8px; font-weight: bold; font-size: 14px; display: inline-block; box-shadow: 0 4px 6px rgba(13,148,136,0.15);">${campaignCtaText}</a>
+      </div>
+    </div>
+  </div>
+</div>`;
+  };
+
   const handleCreateCampaign = async () => {
-    if (!newCampaign.name || !newCampaign.subject || !newCampaign.body_html) return;
+    const compiledHtml = compileCampaignHtml();
+    
+    if (!campaignName || !campaignSubject || !compiledHtml) {
+      showStatus("❌ Please fill in all campaign setup parameters.", "error");
+      return;
+    }
+    
     setLoading(true);
     try {
+      const payload = {
+        name: campaignName,
+        subject: campaignSubject,
+        body_html: compiledHtml,
+        store_id: campaignAudience === "all" ? "WaiRaiders Store" : campaignAudience,
+        scheduled_at: campaignSchedule === "later" && campaignScheduledAt ? new Date(campaignScheduledAt).toISOString() : null
+      };
+
       const res = await fetch(`${API_BASE}/api/marketing/campaigns`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newCampaign),
+        body: JSON.stringify(payload),
       });
+
       if (res.ok) {
-        showStatus("✔️ Campaign created successfully!", "success");
+        showStatus(campaignSchedule === "later" 
+          ? "✔️ Campaign scheduled for delayed send successfully!" 
+          : "✔️ Campaign draft saved successfully!", "success");
         setCampaignModalOpen(false);
-        setNewCampaign({ name: "", subject: "", body_html: "", store_id: "WaiRaiders Store" });
+        setCampaignName("");
+        setCampaignSubject("");
+        setCampaignTitle("🏈 WaiRaiders Jersey Special!");
+        setCampaignSubtitle("Get 25% off our exclusive custom drops this weekend only.");
+        setCampaignBody("We are excited to share our latest premium custom NFL jersey mockups. Tailored with high-durability fabrics, bold colors, and customized lettering, these designs are ready to elevate your team spirit in style.");
+        setCampaignCtaText("🛍️ Shop Jersey Collection");
+        setCampaignCtaUrl("https://wairaiders.com/shop");
+        setCampaignAccentColor("#0d9488");
+        setCampaignSchedule("now");
+        setCampaignScheduledAt("");
         loadCampaigns();
       } else {
-        showStatus("❌ Failed to create campaign.", "error");
+        showStatus("❌ Failed to compile and save campaign.", "error");
       }
     } catch (err) {
       showStatus("❌ Network error connecting to API.", "error");
@@ -236,87 +302,6 @@ export default function MarketingPage() {
     }
   };
 
-  const handleSaveSender = async () => {
-    if (!newSender.from_email || !newSender.domain || !newSender.from_name) {
-      showStatus("❌ Please fill in required sender parameters.", "error");
-      return;
-    }
-    setLoading(true);
-    try {
-      const payload = {
-        ...newSender,
-        id: editSenderId || undefined
-      };
-      const res = await fetch(`${API_BASE}/api/marketing/senders`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (res.ok) {
-        showStatus("✔️ Sender identity successfully verified and active!", "success");
-        setSenderModalOpen(false);
-        setEditSenderId(null);
-        setNewSender({
-          store_id: "WaiRaiders Store",
-          provider: "cloudflare",
-          from_name: "",
-          from_email: "",
-          reply_to_email: "",
-          domain: "",
-          status: "active",
-          provider_config_ref: ""
-        });
-        loadSenders();
-      } else {
-        showStatus("❌ Failed to save sender identity configuration.", "error");
-      }
-    } catch (err) {
-      showStatus("❌ Network error connecting to API.", "error");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDeleteSender = async (id: number) => {
-    if (!confirm("Are you sure you want to remove this domain sender identity?")) return;
-    try {
-      const res = await fetch(`${API_BASE}/api/marketing/senders/${id}`, {
-        method: "DELETE"
-      });
-      if (res.ok) {
-        showStatus("🗑️ Sender identity removed successfully.", "success");
-        loadSenders();
-      } else {
-        showStatus("❌ Failed to remove sender identity.", "error");
-      }
-    } catch (err) {
-      showStatus("❌ Network error connecting to API.", "error");
-    }
-  };
-
-  const handleEditSender = (s: SenderIdentity) => {
-    setEditSenderId(s.id || null);
-    setNewSender({
-      store_id: s.store_id,
-      provider: s.provider,
-      from_name: s.from_name,
-      from_email: s.from_email,
-      reply_to_email: s.reply_to_email || "",
-      domain: s.domain,
-      status: s.status,
-      provider_config_ref: s.provider_config_ref || ""
-    });
-    setSenderModalOpen(true);
-  };
-
-  const handleApplyTemplate = (temp: Template) => {
-    setNewCampaign({
-      ...newCampaign,
-      subject: temp.subject,
-      body_html: temp.body_html
-    });
-  };
-
   return (
     <div style={{ paddingBottom: 40 }}>
       {/* Navigation tabs */}
@@ -332,7 +317,7 @@ export default function MarketingPage() {
             📝 Email Templates
           </button>
           <button className={`btn ${activeTab === "senders" ? "btn-primary" : "btn-secondary"}`} onClick={() => setActiveTab("senders")}>
-            🔧 Sender Domains & Workers
+            🔧 Mapped Domains & Workers
           </button>
         </div>
       </div>
@@ -355,7 +340,12 @@ export default function MarketingPage() {
       {activeTab === "campaigns" && (
         <div className="card">
           <div className="card-header">
-            <h2 className="card-title">Outbound Marketing Campaigns</h2>
+            <div>
+              <h2 className="card-title">Outbound Marketing Campaigns</h2>
+              <p style={{ margin: "4px 0 0 0", color: "var(--text-secondary)", fontSize: 13 }}>
+                Design promotional templates, target audience lists, and schedule high-delivery marketing campaigns.
+              </p>
+            </div>
             <button className="btn btn-primary" onClick={() => setCampaignModalOpen(true)}>➕ Create Campaign</button>
           </div>
           <div className="table-wrapper">
@@ -364,38 +354,46 @@ export default function MarketingPage() {
                 <tr>
                   <th>Campaign Name</th>
                   <th>Subject Line</th>
-                  <th>Status</th>
+                  <th>Timeline Status</th>
                   <th>Recipient Count</th>
+                  <th>Scheduled Send Time</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {campaigns.length === 0 ? (
                   <tr>
-                    <td colSpan={5} style={{ textAlign: "center", color: "var(--text-secondary)", padding: 24 }}>No campaigns found. Create one to get started!</td>
+                    <td colSpan={6} style={{ textAlign: "center", color: "var(--text-secondary)", padding: 24 }}>No campaigns found. Create one to get started!</td>
                   </tr>
                 ) : (
                   campaigns.map((c) => (
                     <tr key={c.id}>
-                      <td style={{ fontWeight: 500 }}>{c.name}</td>
+                      <td style={{ fontWeight: 600 }}>{c.name}</td>
                       <td style={{ fontSize: 13, color: "var(--text-secondary)" }}>{c.subject}</td>
                       <td>
                         <span className={`badge ${
                           c.status === "completed" ? "badge-success" : 
-                          c.status === "sending" ? "badge-info" : "badge-warning"
+                          c.status === "sending" ? "badge-info" : 
+                          c.status === "scheduled" ? "badge-warning" : "badge-secondary"
                         }`}>
                           {c.status.toUpperCase()}
                         </span>
                       </td>
                       <td style={{ fontFamily: "monospace" }}>{c.sent_count}</td>
+                      <td style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+                        {c.scheduled_at ? new Date(c.scheduled_at).toLocaleString() : "Immediate"}
+                      </td>
                       <td>
                         {c.status === "draft" && (
                           <button className="btn btn-primary" style={{ padding: "4px 8px", fontSize: 12 }} onClick={() => handleTriggerSend(c.id)} disabled={loading}>
                             🚀 Send Now
                           </button>
                         )}
-                        {c.status !== "draft" && (
-                          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>Dispatched</span>
+                        {c.status === "scheduled" && (
+                          <span style={{ fontSize: 12, color: "var(--warning)", fontWeight: 500 }}>⏳ Queued in Worker</span>
+                        )}
+                        {c.status === "completed" && (
+                          <span style={{ fontSize: 12, color: "var(--text-muted)" }}>✔️ Dispatched</span>
                         )}
                       </td>
                     </tr>
@@ -478,7 +476,7 @@ export default function MarketingPage() {
         </div>
       )}
 
-      {/* Senders Section */}
+      {/* Redirect settings Tab */}
       {activeTab === "senders" && (
         <div className="card" style={{ padding: "48px 24px", textAlign: "center" }}>
           <div style={{ fontSize: 48, marginBottom: 16 }}>🌐</div>
@@ -494,46 +492,216 @@ export default function MarketingPage() {
         </div>
       )}
 
-      {/* Create Campaign Modal */}
+      {/* Visual Email Campaign Builder Modal */}
       {campaignModalOpen && (
         <div className="upload-modal-overlay" onClick={() => setCampaignModalOpen(false)}>
-          <div className="upload-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 680 }}>
+          <div className="upload-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 1080, width: "95vw" }}>
             <div className="upload-modal-header">
-              <div className="upload-modal-title">📧 Create Outbound Campaign</div>
+              <div className="upload-modal-title">📧 Visual Outbound Campaign Composer</div>
               <button className="upload-modal-close" onClick={() => setCampaignModalOpen(false)}>✕</button>
             </div>
-            <div className="upload-modal-body">
-              <div className="form-group">
-                <label className="form-label">Campaign Name</label>
-                <input className="input" placeholder="WaiRaiders Promo Newsletter" value={newCampaign.name} onChange={(e) => setNewCampaign({ ...newCampaign, name: e.target.value })} />
-              </div>
-
-              {templates.length > 0 && (
-                <div className="form-group" style={{ marginBottom: 16 }}>
-                  <label className="form-label" style={{ fontWeight: 600 }}>Apply Prebuilt Template</label>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                    {templates.map(t => (
-                      <button key={t.id} className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: 12 }} onClick={() => handleApplyTemplate(t)}>
-                        📄 {t.name}
-                      </button>
-                    ))}
+            
+            <div className="upload-modal-body" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24, padding: "16px 20px" }}>
+              {/* Left Column: Visual Settings & Fields */}
+              <div style={{ display: "flex", flexDirection: "column", gap: 16, overflowY: "auto", maxHeight: "70vh", paddingRight: 10 }}>
+                
+                {/* 1. Basic Title Info */}
+                <div style={{ borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
+                  <div className="form-group">
+                    <label className="form-label" style={{ fontWeight: 600 }}>Campaign Name (Internal Ref)</label>
+                    <input className="input" placeholder="e.g. WaiRaiders Season Opener Promo" value={campaignName} onChange={(e) => setCampaignName(e.target.value)} />
+                  </div>
+                  <div className="form-group" style={{ marginTop: 10 }}>
+                    <label className="form-label" style={{ fontWeight: 600 }}>Email Subject Line</label>
+                    <input className="input" placeholder="Exclusive gametime jersey drops inside!" value={campaignSubject} onChange={(e) => setCampaignSubject(e.target.value)} />
                   </div>
                 </div>
-              )}
 
-              <div className="form-group">
-                <label className="form-label">Subject Line</label>
-                <input className="input" placeholder="Exclusive NFL design drop inside!" value={newCampaign.subject} onChange={(e) => setNewCampaign({ ...newCampaign, subject: e.target.value })} />
+                {/* 2. Choose Marketing template */}
+                <div>
+                  <label className="form-label" style={{ fontWeight: 600, display: "block", marginBottom: 8 }}>Choose Campaign Layout Style</label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <div 
+                      onClick={() => setCampaignTemplate("promo")}
+                      style={{ 
+                        border: `2px solid ${campaignTemplate === "promo" ? "var(--accent)" : "var(--border-default)"}`,
+                        borderRadius: 8, padding: 12, cursor: "pointer", background: "var(--bg-secondary)"
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>🏈 Sports Promo</div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Bold team-color headers, central CTA buttons, clean grids.</div>
+                    </div>
+
+                    <div 
+                      onClick={() => setCampaignTemplate("elegant")}
+                      style={{ 
+                        border: `2px solid ${campaignTemplate === "elegant" ? "var(--accent)" : "var(--border-default)"}`,
+                        borderRadius: 8, padding: 12, cursor: "pointer", background: "var(--bg-secondary)"
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>✨ Minimalist Sleek</div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Serif typography, clean lines, elegant signature signatures.</div>
+                    </div>
+
+                    <div 
+                      onClick={() => setCampaignTemplate("bold")}
+                      style={{ 
+                        border: `2px solid ${campaignTemplate === "bold" ? "var(--accent)" : "var(--border-default)"}`,
+                        borderRadius: 8, padding: 12, cursor: "pointer", background: "var(--bg-secondary)"
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>🔥 Bold Alert</div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Urgency warning theme, high-contrast, bold action layouts.</div>
+                    </div>
+
+                    <div 
+                      onClick={() => setCampaignTemplate("custom")}
+                      style={{ 
+                        border: `2px solid ${campaignTemplate === "custom" ? "var(--accent)" : "var(--border-default)"}`,
+                        borderRadius: 8, padding: 12, cursor: "pointer", background: "var(--bg-secondary)"
+                      }}
+                    >
+                      <div style={{ fontWeight: 600, fontSize: 13 }}>📝 Custom HTML</div>
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Standard HTML builder for custom newsletters envelopes.</div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* 3. Dynamic Template Fields */}
+                {campaignTemplate !== "custom" ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12, background: "var(--bg-secondary)", padding: 14, borderRadius: 8, border: "1px solid var(--border-default)" }}>
+                    <div style={{ fontSize: 12, fontWeight: "bold", color: "var(--accent)", textTransform: "uppercase" }}>Layout Content parameters</div>
+                    
+                    <div className="form-group">
+                      <label className="form-label">Email Header Title</label>
+                      <input className="input" value={campaignTitle} onChange={(e) => setCampaignTitle(e.target.value)} />
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">Email Header Subheading</label>
+                      <input className="input" value={campaignSubtitle} onChange={(e) => setCampaignSubtitle(e.target.value)} />
+                    </div>
+
+                    {campaignTemplate === "promo" && (
+                      <div className="form-group">
+                        <label className="form-label">Accent / Brand Color</label>
+                        <input className="input" type="color" value={campaignAccentColor} onChange={(e) => setCampaignAccentColor(e.target.value)} style={{ height: 38, padding: "2px 6px", cursor: "pointer" }} />
+                      </div>
+                    )}
+
+                    <div className="form-group">
+                      <label className="form-label">Main Body Content Copy</label>
+                      <textarea className="input" value={campaignBody} onChange={(e) => setCampaignBody(e.target.value)} style={{ minHeight: 100, fontSize: 13, resize: "vertical" }} />
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                      <div className="form-group">
+                        <label className="form-label">CTA Button Label</label>
+                        <input className="input" value={campaignCtaText} onChange={(e) => setCampaignCtaText(e.target.value)} />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label">CTA Link URL</label>
+                        <input className="input" value={campaignCtaUrl} onChange={(e) => setCampaignCtaUrl(e.target.value)} />
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="form-group">
+                    <label className="form-label">Message HTML Content Editor</label>
+                    <textarea 
+                      className="input" 
+                      placeholder="Type custom responsive newsletter HTML envelopes..." 
+                      value={campaignBody} 
+                      onChange={(e) => setCampaignBody(e.target.value)} 
+                      style={{ minHeight: 220, fontFamily: "monospace", fontSize: 12 }} 
+                    />
+                  </div>
+                )}
+
+                {/* 4. Audience Segment */}
+                <div className="form-group">
+                  <label className="form-label" style={{ fontWeight: 600 }}>Target Campaign Audience</label>
+                  <select className="input" value={campaignAudience} onChange={(e) => setCampaignAudience(e.target.value)} style={{ padding: "8px 12px" }}>
+                    <option value="all">👥 All Subscribed Contacts (Global Segments)</option>
+                    <option value="WaiRaiders Store">🏈 WaiRaiders Store Audience Only</option>
+                    <option value="Vulius Store">🎽 Vulius Store Audience Only</option>
+                  </select>
+                </div>
+
+                {/* 5. Schedule / Send Timeline */}
+                <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: 16 }}>
+                  <label className="form-label" style={{ fontWeight: 600, display: "block", marginBottom: 8 }}>Schedule Delivery Timeline</label>
+                  <div style={{ display: "flex", gap: 12, marginBottom: 12 }}>
+                    <button 
+                      className={`btn ${campaignSchedule === "now" ? "btn-primary" : "btn-secondary"}`} 
+                      style={{ flex: 1, fontSize: 13, padding: "8px 12px" }}
+                      onClick={() => setCampaignSchedule("now")}
+                    >
+                      🚀 Send Immediately
+                    </button>
+                    <button 
+                      className={`btn ${campaignSchedule === "later" ? "btn-primary" : "btn-secondary"}`} 
+                      style={{ flex: 1, fontSize: 13, padding: "8px 12px" }}
+                      onClick={() => setCampaignSchedule("later")}
+                    >
+                      ⏳ Schedule for Later
+                    </button>
+                  </div>
+
+                  {campaignSchedule === "later" && (
+                    <div className="form-group" style={{ background: "var(--bg-secondary)", padding: 12, borderRadius: 6, border: "1px solid var(--border-default)" }}>
+                      <label className="form-label" style={{ fontWeight: 500 }}>Select High-Conversion Send Time</label>
+                      <input 
+                        className="input" 
+                        type="datetime-local" 
+                        value={campaignScheduledAt} 
+                        onChange={(e) => setCampaignScheduledAt(e.target.value)} 
+                        style={{ padding: "4px 8px" }}
+                      />
+                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 4 }}>
+                        Campaign will automatically dispatch using your background queues at this exact timeframe.
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="form-group">
-                <label className="form-label">Message HTML Content</label>
-                <textarea className="input" placeholder="Type customized HTML template body..." value={newCampaign.body_html} onChange={(e) => setNewCampaign({ ...newCampaign, body_html: e.target.value })} style={{ minHeight: 200, fontFamily: "monospace", fontSize: 13 }} />
+
+              {/* Right Column: Live Mobile/Responsive Preview */}
+              <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+                <label className="form-label" style={{ fontWeight: 600 }}>Real-Time Responsive Campaign Preview</label>
+                <div style={{ 
+                  flex: 1, 
+                  border: "1px solid var(--border-default)", 
+                  borderRadius: 12, 
+                  background: "#f1f5f9", 
+                  padding: 20, 
+                  display: "flex", 
+                  justifyContent: "center", 
+                  alignItems: "center",
+                  minHeight: 400
+                }}>
+                  <div style={{ 
+                    width: "100%", 
+                    maxWidth: 480, 
+                    height: "100%", 
+                    maxHeight: 520, 
+                    background: "#ffffff", 
+                    borderRadius: 8, 
+                    boxShadow: "0 8px 24px rgba(0,0,0,0.06)", 
+                    overflowY: "auto",
+                    border: "1px solid var(--border-default)"
+                  }}>
+                    {/* Render dynamically compiled HTML preview */}
+                    <div dangerouslySetInnerHTML={{ __html: compileCampaignHtml() }} />
+                  </div>
+                </div>
               </div>
             </div>
+
             <div className="upload-modal-footer">
               <button className="btn btn-secondary" onClick={() => setCampaignModalOpen(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleCreateCampaign} disabled={loading}>
-                💾 Create Draft
+                {campaignSchedule === "later" ? "💾 Schedule Outbound Campaign" : "🚀 Create Campaign Draft"}
               </button>
             </div>
           </div>
@@ -596,69 +764,6 @@ export default function MarketingPage() {
               <button className="btn btn-secondary" onClick={() => setImportModalOpen(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleCsvImport} disabled={loading}>
                 🔄 Sync Contacts
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Mapped Domain Sender Modal */}
-      {senderModalOpen && (
-        <div className="upload-modal-overlay" onClick={() => setSenderModalOpen(false)}>
-          <div className="upload-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
-            <div className="upload-modal-header">
-              <div className="upload-modal-title">🔧 {editSenderId ? "Edit Sender Domain" : "Map Cloudflare Sender Domain"}</div>
-              <button className="upload-modal-close" onClick={() => setSenderModalOpen(false)}>✕</button>
-            </div>
-            <div className="upload-modal-body">
-              <div className="form-group">
-                <label className="form-label">Store Connection</label>
-                <select className="input" value={newSender.store_id} onChange={(e) => setNewSender({ ...newSender, store_id: e.target.value })} style={{ padding: "8px 12px" }}>
-                  <option value="WaiRaiders Store">WaiRaiders Store</option>
-                  <option value="Vulius Store">Vulius Store</option>
-                </select>
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Sender Display Name</label>
-                <input className="input" placeholder="e.g. WaiRaiders Support" value={newSender.from_name} onChange={(e) => setNewSender({ ...newSender, from_name: e.target.value })} />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Outbound Sending Email</label>
-                <input className="input" type="email" placeholder="e.g. support@wairaiders.com" value={newSender.from_email} onChange={(e) => setNewSender({ ...newSender, from_email: e.target.value })} />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Inbound Reply-To Email</label>
-                <input className="input" type="email" placeholder="e.g. customer@wairaiders.com" value={newSender.reply_to_email} onChange={(e) => setNewSender({ ...newSender, reply_to_email: e.target.value })} />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Outbound Verified Domain</label>
-                <input className="input" placeholder="e.g. wairaiders.com" value={newSender.domain} onChange={(e) => setNewSender({ ...newSender, domain: e.target.value })} />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label">Outbound Gateway Provider</label>
-                <select className="input" value={newSender.provider} onChange={(e) => setNewSender({ ...newSender, provider: e.target.value as any })} style={{ padding: "8px 12px" }}>
-                  <option value="cloudflare">Cloudflare Workers Binding (paid)</option>
-                  <option value="resend">Resend API REST Adapter</option>
-                  <option value="smtp">Standard SMTP Gateway</option>
-                </select>
-              </div>
-
-              {newSender.provider !== "cloudflare" && (
-                <div className="form-group">
-                  <label className="form-label">{newSender.provider === "resend" ? "Resend API Token" : "SMTP Host String (host:port:user:pass)"}</label>
-                  <input className="input" type="password" placeholder={newSender.provider === "resend" ? "re_xxxxxxxxx" : "smtp.server.com:587:user:pass"} value={newSender.provider_config_ref} onChange={(e) => setNewSender({ ...newSender, provider_config_ref: e.target.value })} />
-                </div>
-              )}
-            </div>
-            <div className="upload-modal-footer">
-              <button className="btn btn-secondary" onClick={() => setSenderModalOpen(false)}>Cancel</button>
-              <button className="btn btn-primary" onClick={handleSaveSender} disabled={loading}>
-                💾 Save sender Domain
               </button>
             </div>
           </div>

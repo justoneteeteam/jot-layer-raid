@@ -469,3 +469,131 @@ def execute_flow_step(self, flow_run_id: int, step_index: int):
         logger.error(f"❌ Error executing automation flow step #{flow_run_id}: {err}")
     finally:
         db.close()
+
+
+@celery_app.task(name="tasks.dispatch_campaign_task")
+def dispatch_campaign_task(campaign_id: int):
+    """
+    Background Task: Dispatches a scheduled marketing campaign to all subscribed contacts,
+    respecting consent and suppressions, appending List-Unsubscribe and secure trackers.
+    """
+    logger.info(f"🚀 Celery background dispatching campaign ID {campaign_id}...")
+    db = SessionLocal()
+    try:
+        from models.marketing_campaign import MarketingCampaign
+        from models.contact import Contact
+        from models.suppression import Suppression
+        from models.email_sender_identity import EmailSenderIdentity
+        from models.email_event import EmailEvent
+        from services.email_engine import get_email_provider
+        
+        campaign = db.query(MarketingCampaign).filter(MarketingCampaign.id == campaign_id).first()
+        if not campaign:
+            logger.error(f"Campaign ID {campaign_id} not found in database!")
+            return
+            
+        if campaign.status not in ("draft", "scheduled"):
+            logger.warning(f"Campaign ID {campaign_id} is in status '{campaign.status}'. Skipping dispatch.")
+            return
+            
+        campaign.status = "sending"
+        db.commit()
+        
+        # 1. Resolve matching Outbound Sender config
+        sender_config = db.query(EmailSenderIdentity).filter(EmailSenderIdentity.status == "active").first()
+        if not sender_config:
+            sender_config = EmailSenderIdentity(
+                store_id="WaiRaiders Store",
+                provider="cloudflare",
+                from_name="WaiRaiders",
+                from_email="support@wairaiders.com",
+                domain="wairaiders.com"
+            )
+            
+        provider_secrets = {}
+        if sender_config.provider == "cloudflare":
+            from routers.oms import load_email_settings
+            crm_sets = load_email_settings()
+            provider_secrets = {
+                "cloudflare_account_id": crm_sets.get("cloudflare_account_id"),
+                "cloudflare_api_token": crm_sets.get("cloudflare_api_token")
+            }
+        elif sender_config.provider == "resend":
+            provider_secrets = {"resend_api_key": sender_config.provider_config_ref}
+            
+        provider_instance = get_email_provider(sender_config.provider, provider_secrets)
+        
+        # 2. Gather eligible recipients (filter out unsubscribed and suppressed contacts)
+        all_contacts = db.query(Contact).filter(Contact.consent_status == "subscribed").all()
+        suppression_list = {s.email.lower() for s in db.query(Suppression).all()}
+        
+        eligible_contacts = [c for c in all_contacts if c.email.lower() not in suppression_list]
+        
+        if not eligible_contacts:
+            campaign.status = "completed"
+            db.commit()
+            logger.info("No eligible subscribers found. Delivery skipped.")
+            return
+            
+        sent_count = 0
+        for contact in eligible_contacts:
+            # Render personalized placeholders
+            personalized_body = campaign.body_html.replace("{customer_name}", contact.first_name or "Subscriber")
+            
+            # Unsubscribe links & physical mailing details
+            unsubscribe_url = f"https://api.justonetee.org/api/marketing/unsubscribe?c_id={contact.id}"
+            personalized_body += f"""
+            <hr style="border:0; border-top:1px solid #e2e8f0; margin-top:32px; margin-bottom:16px;" />
+            <div style="font-size:11px; text-align:center; color:#94a3b8; line-height:1.5;">
+                This marketing message was sent to {contact.email}.<br/>
+                JOT Layer Raid Corp • 123 Sports Jersey Ave, Provo, UT 84041<br/>
+                <a href="{unsubscribe_url}" style="color:#f97316; text-decoration:underline;">One-Click Unsubscribe</a>
+            </div>
+            """
+            
+            # Inbound pixel tracking
+            personalized_body += f'<img src="https://api.justonetee.org/api/marketing/track/open/{campaign.id}/{contact.id}.gif" width="1" height="1" style="display:none;" />'
+            
+            # Headers
+            headers = {
+                "List-Unsubscribe": f"<{unsubscribe_url}>",
+                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+            }
+            
+            success = provider_instance.send_email(
+                from_name=sender_config.from_name,
+                from_email=sender_config.from_email,
+                recipient=contact.email,
+                subject=campaign.subject,
+                html_body=personalized_body,
+                reply_to=sender_config.reply_to_email,
+                headers=headers
+            )
+            
+            if success:
+                sent_count += 1
+                evt = EmailEvent(
+                    store_id=sender_config.store_id,
+                    contact_id=contact.id,
+                    campaign_id=campaign_id,
+                    type="sent"
+                )
+                db.add(evt)
+                db.commit()
+                
+        campaign.status = "completed"
+        campaign.sent_count = sent_count
+        db.commit()
+        logger.info(f"Campaign {campaign_id} Celery dispatch completed. Sent count: {sent_count}")
+        
+    except Exception as e:
+        logger.error(f"❌ Error in dispatch_campaign_task: {e}")
+        try:
+            campaign = db.query(MarketingCampaign).filter(MarketingCampaign.id == campaign_id).first()
+            if campaign:
+                campaign.status = "draft"
+                db.commit()
+        except:
+            pass
+    finally:
+        db.close()

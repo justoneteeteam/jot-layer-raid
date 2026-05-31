@@ -255,20 +255,43 @@ def create_campaign(payload: dict, db: Session = Depends(get_db)):
     subject = payload.get("subject")
     body_html = payload.get("body_html")
     store_id = payload.get("store_id", "WaiRaiders Store")
+    scheduled_at_str = payload.get("scheduled_at")
 
     if not name or not subject or not body_html:
         raise HTTPException(status_code=400, detail="Missing required parameters.")
+
+    status = "draft"
+    scheduled_at = None
+    if scheduled_at_str:
+        try:
+            scheduled_at = datetime.fromisoformat(scheduled_at_str.replace("Z", "+00:00"))
+            status = "scheduled"
+        except Exception as e:
+            logger.error(f"Error parsing campaign scheduled_at: {e}")
 
     campaign = MarketingCampaign(
         name=name,
         subject=subject,
         body_html=body_html,
-        status="draft",
+        status=status,
+        scheduled_at=scheduled_at,
         sent_count=0
     )
     db.add(campaign)
     db.commit()
     db.refresh(campaign)
+
+    if campaign.status == "scheduled" and campaign.scheduled_at:
+        now = datetime.now(timezone.utc)
+        delta_seconds = int((campaign.scheduled_at - now).total_seconds())
+        if delta_seconds > 0:
+            from tasks import dispatch_campaign_task
+            dispatch_campaign_task.apply_async(args=[campaign.id], countdown=delta_seconds)
+            logger.info(f"Queued scheduled campaign {campaign.id} to run in {delta_seconds}s (ETA: {campaign.scheduled_at})")
+        else:
+            from tasks import dispatch_campaign_task
+            dispatch_campaign_task.delay(campaign.id)
+
     return {"status": "success", "campaign": campaign}
 
 @router.post("/campaigns/{campaign_id}/send")
