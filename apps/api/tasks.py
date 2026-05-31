@@ -260,7 +260,6 @@ def run_bulk_job(self, bulk_job_id: int):
             job.status = "failed"
         else:
             job.status = "completed"
-            
         job.completed_at = datetime.now(timezone.utc)
         db.commit()
         logger.info(f"✅ Finished background Bulk Job #{bulk_job_id} successfully!")
@@ -274,5 +273,189 @@ def run_bulk_job(self, bulk_job_id: int):
                 db.commit()
         except:
             pass
+    finally:
+        db.close()
+
+@celery_app.task(bind=True, name="tasks.execute_flow_step")
+def execute_flow_step(self, flow_run_id: int, step_index: int):
+    """
+    Background Task: Executes a single compiled workflow step for an automation run,
+    handles wait-state calculations, suppressions filters, and personalized sends.
+    """
+    logger.info(f"⚙️ Executing Automation Flow Run #{flow_run_id} | Step Index: {step_index}")
+    db = SessionLocal()
+    try:
+        from models.flow_run import FlowRun
+        from models.automation_flow import AutomationFlow
+        from models.contact import Contact
+        from models.suppression import Suppression
+        from models.email_template import EmailTemplate
+        from models.email_sender_identity import EmailSenderIdentity
+        from models.email_event import EmailEvent
+        from services.email_engine import get_email_provider
+
+        # 1. Fetch FlowRun
+        flow_run = db.query(FlowRun).filter(FlowRun.id == flow_run_id).first()
+        if not flow_run:
+            logger.error(f"FlowRun #{flow_run_id} not found!")
+            return
+
+        if flow_run.status in ("completed", "cancelled"):
+            logger.info(f"FlowRun #{flow_run_id} is already in state '{flow_run.status}'. Stopping.")
+            return
+
+        # 2. Fetch Flow and compiled schema
+        flow = db.query(AutomationFlow).filter(AutomationFlow.id == flow_run.flow_id).first()
+        if not flow or not flow.is_active:
+            logger.warning(f"Flow ID {flow_run.flow_id} is inactive or missing. Terminating run.")
+            flow_run.status = "cancelled"
+            db.commit()
+            return
+
+        compiled_steps = json.loads(flow.compiled_schema_json).get("steps", [])
+        if step_index >= len(compiled_steps):
+            logger.info(f"FlowRun #{flow_run_id} has reached end of sequence. Marking as completed.")
+            flow_run.status = "completed"
+            db.commit()
+            return
+
+        step = compiled_steps[step_index]
+        step_type = step.get("type")
+        logger.info(f"Processing step node '{step.get('id')}' of type '{step_type}'")
+
+        # 3. Fetch Subscriber Contact
+        contact = db.query(Contact).filter(Contact.id == flow_run.contact_id).first()
+        if not contact or contact.consent_status != "subscribed":
+            logger.info(f"Contact {flow_run.contact_id} is missing or has opted out. Halting flow.")
+            flow_run.status = "cancelled"
+            db.commit()
+            return
+
+        # Check Suppression table
+        is_suppressed = db.query(Suppression).filter(Suppression.store_id == flow_run.store_id, Suppression.email == contact.email).first()
+        if is_suppressed:
+            logger.info(f"Contact email {contact.email} is in suppression list. Halting flow.")
+            flow_run.status = "cancelled"
+            db.commit()
+            return
+
+        flow_run.current_node_id = step.get("id")
+
+        if step_type == "wait":
+            duration_hours = step.get("duration_hours", 1)
+            # Wait calculations
+            duration_seconds = int(duration_hours * 3600)
+            
+            # Update status to waiting
+            flow_run.status = "waiting"
+            flow_run.next_execution_at = datetime.fromtimestamp(datetime.now().timestamp() + duration_seconds, timezone.utc)
+            db.commit()
+
+            # Schedule the next step execution in Celery using countdown
+            execute_flow_step.apply_async(
+                args=[flow_run_id, step_index + 1],
+                countdown=duration_seconds
+            )
+            logger.info(f"FlowRun #{flow_run_id} put in wait queue. Will resume in {duration_seconds}s.")
+            return
+
+        elif step_type == "suppression_check":
+            flow_run.status = "active"
+            db.commit()
+            execute_flow_step.delay(flow_run_id, step_index + 1)
+            return
+
+        elif step_type == "send_email":
+            template_id = step.get("template_id")
+            template = db.query(EmailTemplate).filter(EmailTemplate.id == template_id).first()
+            if not template:
+                logger.error(f"Template ID {template_id} not found in step execution!")
+                flow_run.status = "cancelled"
+                db.commit()
+                return
+
+            # Resolve sender branding configs
+            sender_config = db.query(EmailSenderIdentity).filter(EmailSenderIdentity.store_id == flow_run.store_id, EmailSenderIdentity.status == "active").first()
+            if not sender_config:
+                sender_config = db.query(EmailSenderIdentity).filter(EmailSenderIdentity.status == "active").first()
+
+            # Mock sender if not found in db
+            if not sender_config:
+                sender_config = EmailSenderIdentity(
+                    store_id=flow_run.store_id,
+                    provider="cloudflare",
+                    from_name="JOT Support",
+                    from_email="support@justonetee.org",
+                    domain="justonetee.org"
+                )
+
+            # Gather Provider Configuration
+            provider_secrets = {}
+            if sender_config.provider == "cloudflare":
+                from routers.oms import load_email_settings
+                settings = load_email_settings()
+                provider_secrets = {
+                    "cloudflare_account_id": settings.get("cloudflare_account_id"),
+                    "cloudflare_api_token": settings.get("cloudflare_api_token")
+                }
+            elif sender_config.provider == "resend":
+                provider_secrets = {"resend_api_key": sender_config.provider_config_ref}
+
+            provider_instance = get_email_provider(sender_config.provider, provider_secrets)
+
+            # Renders personalized placeholders
+            personalized_body = template.body_html.replace("{customer_name}", contact.first_name or "Customer")
+            
+            # Format unsubscribe redirection URL
+            unsubscribe_url = f"https://api.justonetee.org/api/marketing/unsubscribe?c_id={contact.id}"
+            
+            # Safe physical address footer injection
+            personalized_body += f"""
+            <hr style="border:0; border-top:1px solid #e2e8f0; margin-top:32px; margin-bottom:16px;" />
+            <div style="font-size:11px; text-align:center; color:#94a3b8; line-height:1.5;">
+                This automated email was sent to {contact.email}.<br/>
+                JOT Layer Raid Corp • 123 Sports Jersey Ave, Provo, UT 84041<br/>
+                <a href="{unsubscribe_url}" style="color:#f97316; text-decoration:underline;">One-Click Unsubscribe</a>
+            </div>
+            """
+
+            # Serve tracking opens pixel
+            personalized_body += f'<img src="https://api.justonetee.org/api/marketing/track/open/{template.id}/{contact.id}.gif" width="1" height="1" style="display:none;" />'
+
+            # Outbound compliance headers
+            headers = {
+                "List-Unsubscribe": f"<{unsubscribe_url}>",
+                "List-Unsubscribe-Post": "List-Unsubscribe=One-Click"
+            }
+
+            logger.info(f"Dispatched automated flow email via provider '{sender_config.provider}' to {contact.email}")
+            success = provider_instance.send_email(
+                from_name=sender_config.from_name,
+                from_email=sender_config.from_email,
+                recipient=contact.email,
+                subject=template.subject.replace("{customer_name}", contact.first_name or "Customer"),
+                html_body=personalized_body,
+                reply_to=sender_config.reply_to_email,
+                headers=headers
+            )
+
+            if success:
+                # Save EmailEvent record
+                evt = EmailEvent(
+                    store_id=flow_run.store_id,
+                    contact_id=contact.id,
+                    flow_run_id=flow_run_id,
+                    type="sent"
+                )
+                db.add(evt)
+                db.commit()
+
+            flow_run.status = "active"
+            db.commit()
+            execute_flow_step.delay(flow_run_id, step_index + 1)
+            return
+
+    except Exception as err:
+        logger.error(f"❌ Error executing automation flow step #{flow_run_id}: {err}")
     finally:
         db.close()

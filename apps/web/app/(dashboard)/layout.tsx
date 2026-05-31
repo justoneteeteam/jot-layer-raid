@@ -21,6 +21,9 @@ const navItems = [
   { label: "Customer CRM", icon: "👥", href: "/oms/customers" },
   { label: "Product Catalog", icon: "🎽", href: "/oms/products" },
   { label: "Email", icon: "✉️", href: "/oms/tickets" },
+  { section: "MARKETING" },
+  { label: "Campaigns & Lists", icon: "📧", href: "/marketing" },
+  { label: "Automations", icon: "⚡", href: "/marketing/automations" },
   { section: "SYSTEM" },
   { label: "Settings", icon: "🔧", href: "/settings" },
 ];

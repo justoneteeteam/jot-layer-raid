@@ -102,22 +102,54 @@ def format_template(template_str, customer_name, order_id, shipping_status, trac
             .replace("{tracking_number}", tracking_number or ""))
 
 def actual_send_email(to_email: str, subject: str, body_text: str, custom_html: str = None):
-    """Send a real email using Cloudflare Email Sending Service REST API."""
+    """Send a real email routing dynamically through JOT's pluggable EmailProvider layer."""
+    from services.email_engine import get_email_provider
+    from models.email_sender_identity import EmailSenderIdentity
+    from database import SessionLocal
+    
+    db = SessionLocal()
+    sender_config = None
+    try:
+        # Load first active Sender Identity
+        sender_config = db.query(EmailSenderIdentity).filter(EmailSenderIdentity.status == "active").first()
+    except Exception as e:
+        logger.error(f"Error querying EmailSenderIdentity: {e}")
+    finally:
+        db.close()
+
+    # Load legacy configurations for backwards compatibility
     settings = load_email_settings()
     account_id = settings.get("cloudflare_account_id")
     api_token = settings.get("cloudflare_api_token")
-    sender = settings.get("sender_email", "customer@justonetee.org")
-    
-    if not account_id or not api_token:
-        logger.warning("Cloudflare Email credentials not fully configured in Settings. Simulating delivery...")
-        return True
-        
-    url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/email/sending/send"
-    headers = {
-        "Authorization": f"Bearer {api_token}",
-        "Content-Type": "application/json"
+    sender_email = settings.get("sender_email", "customer@justonetee.org")
+    from_name = "JOT Support"
+    provider_type = "cloudflare"
+
+    provider_secrets = {
+        "cloudflare_account_id": account_id,
+        "cloudflare_api_token": api_token
     }
-    
+
+    # Override with active DB sender config if present
+    if sender_config:
+        provider_type = sender_config.provider
+        from_name = sender_config.from_name
+        sender_email = sender_config.from_email
+        if sender_config.provider == "resend":
+            provider_secrets = {"resend_api_key": sender_config.provider_config_ref}
+        elif sender_config.provider == "smtp":
+            # Unpack SMTP host:port:user:pass from reference if configured
+            try:
+                smtp_parts = sender_config.provider_config_ref.split(":")
+                provider_secrets = {
+                    "smtp_host": smtp_parts[0],
+                    "smtp_port": int(smtp_parts[1]),
+                    "smtp_username": smtp_parts[2],
+                    "smtp_password": smtp_parts[3]
+                }
+            except Exception:
+                pass
+
     html_body = custom_html if custom_html else f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; background: #ffffff;">
         <div style="border-bottom: 1px solid #f1f5f9; padding-bottom: 16px; margin-bottom: 20px;">
@@ -131,27 +163,18 @@ def actual_send_email(to_email: str, subject: str, body_text: str, custom_html: 
         </div>
     </div>
     """
-    
-    payload = {
-        "to": to_email,
-        "from": sender,
-        "subject": subject,
-        "text": body_text,
-        "html": html_body
-    }
-    
-    try:
-        response = httpx.post(url, headers=headers, json=payload, timeout=10.0)
-        response_json = response.json()
-        if response.status_code == 200 and response_json.get("success"):
-            logger.info(f"Cloudflare Email successfully sent to {to_email}. Result: {response_json.get('result')}")
-            return True
-        else:
-            logger.error(f"Cloudflare Email API error sending to {to_email}. Status: {response.status_code}, Response: {response.text}")
-            return False
-    except Exception as e:
-        logger.error(f"Exception sending Cloudflare email to {to_email}: {e}")
-        return False
+
+    provider_instance = get_email_provider(provider_type, provider_secrets)
+    success = provider_instance.send_email(
+        from_name=from_name,
+        from_email=sender_email,
+        recipient=to_email,
+        subject=subject,
+        html_body=html_body,
+        text_body=body_text
+    )
+    return success
+
 
 
 def send_tracking_number_email(order: Order, db: Session):
