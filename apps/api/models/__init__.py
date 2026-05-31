@@ -19,6 +19,7 @@ from .email_event import EmailEvent
 from .automation_flow import AutomationFlow
 from .flow_run import FlowRun
 from .email_template import EmailTemplate
+from .marketing_campaign import MarketingCampaign
 
 __all__ = [
     "League", "Team", "Player", "RosterChange",
@@ -27,7 +28,7 @@ __all__ = [
     "Order", "Product", "Ticket",
     "EmailSenderIdentity", "Contact", "Suppression",
     "AudienceSegment", "EmailEvent", "AutomationFlow", "FlowRun",
-    "EmailTemplate",
+    "EmailTemplate", "MarketingCampaign",
 ]
 
 
