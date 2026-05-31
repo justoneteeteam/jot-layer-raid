@@ -31,11 +31,24 @@ interface Contact {
   consent_source: string;
 }
 
+interface SenderIdentity {
+  id?: number;
+  store_id: string;
+  provider: "cloudflare" | "resend" | "ses" | "smtp";
+  from_name: string;
+  from_email: string;
+  reply_to_email?: string;
+  domain: string;
+  status: "pending" | "verified" | "active" | "disabled";
+  provider_config_ref?: string;
+}
+
 export default function MarketingPage() {
-  const [activeTab, setActiveTab] = useState<"campaigns" | "contacts" | "templates">("campaigns");
+  const [activeTab, setActiveTab] = useState<"campaigns" | "contacts" | "templates" | "senders">("campaigns");
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
+  const [senders, setSenders] = useState<SenderIdentity[]>([]);
   
   // Modals and Forms
   const [campaignModalOpen, setCampaignModalOpen] = useState(false);
@@ -46,6 +59,19 @@ export default function MarketingPage() {
   
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [csvText, setCsvText] = useState("");
+
+  const [senderModalOpen, setSenderModalOpen] = useState(false);
+  const [editSenderId, setEditSenderId] = useState<number | null>(null);
+  const [newSender, setNewSender] = useState<SenderIdentity>({
+    store_id: "WaiRaiders Store",
+    provider: "cloudflare",
+    from_name: "",
+    from_email: "",
+    reply_to_email: "",
+    domain: "",
+    status: "active",
+    provider_config_ref: ""
+  });
   
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -79,11 +105,27 @@ export default function MarketingPage() {
     }
   };
 
+  const loadSenders = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/marketing/senders`);
+      if (res.ok) setSenders(await res.json());
+    } catch (err) {
+      console.error("Failed to load sender identities", err);
+    }
+  };
+
   useEffect(() => {
     loadCampaigns();
     loadTemplates();
     loadContacts();
+    loadSenders();
   }, []);
+
+  const showStatus = (msg: string, type: "success" | "error") => {
+    setMessage(msg);
+    setMessageType(type);
+    setTimeout(() => setMessage(""), 5000);
+  };
 
   const handleCreateCampaign = async () => {
     if (!newCampaign.name || !newCampaign.subject || !newCampaign.body_html) return;
@@ -156,7 +198,6 @@ export default function MarketingPage() {
     if (!csvText.trim()) return;
     setLoading(true);
     try {
-      // Basic CSV parsing
       const rows = csvText.split("\n").map(r => r.split(","));
       const contactsToImport = [];
       for (let i = 1; i < rows.length; i++) {
@@ -195,10 +236,77 @@ export default function MarketingPage() {
     }
   };
 
-  const showStatus = (msg: string, type: "success" | "error") => {
-    setMessage(msg);
-    setMessageType(type);
-    setTimeout(() => setMessage(""), 5000);
+  const handleSaveSender = async () => {
+    if (!newSender.from_email || !newSender.domain || !newSender.from_name) {
+      showStatus("❌ Please fill in required sender parameters.", "error");
+      return;
+    }
+    setLoading(true);
+    try {
+      const payload = {
+        ...newSender,
+        id: editSenderId || undefined
+      };
+      const res = await fetch(`${API_BASE}/api/marketing/senders`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        showStatus("✔️ Sender identity successfully verified and active!", "success");
+        setSenderModalOpen(false);
+        setEditSenderId(null);
+        setNewSender({
+          store_id: "WaiRaiders Store",
+          provider: "cloudflare",
+          from_name: "",
+          from_email: "",
+          reply_to_email: "",
+          domain: "",
+          status: "active",
+          provider_config_ref: ""
+        });
+        loadSenders();
+      } else {
+        showStatus("❌ Failed to save sender identity configuration.", "error");
+      }
+    } catch (err) {
+      showStatus("❌ Network error connecting to API.", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteSender = async (id: number) => {
+    if (!confirm("Are you sure you want to remove this domain sender identity?")) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/marketing/senders/${id}`, {
+        method: "DELETE"
+      });
+      if (res.ok) {
+        showStatus("🗑️ Sender identity removed successfully.", "success");
+        loadSenders();
+      } else {
+        showStatus("❌ Failed to remove sender identity.", "error");
+      }
+    } catch (err) {
+      showStatus("❌ Network error connecting to API.", "error");
+    }
+  };
+
+  const handleEditSender = (s: SenderIdentity) => {
+    setEditSenderId(s.id || null);
+    setNewSender({
+      store_id: s.store_id,
+      provider: s.provider,
+      from_name: s.from_name,
+      from_email: s.from_email,
+      reply_to_email: s.reply_to_email || "",
+      domain: s.domain,
+      status: s.status,
+      provider_config_ref: s.provider_config_ref || ""
+    });
+    setSenderModalOpen(true);
   };
 
   const handleApplyTemplate = (temp: Template) => {
@@ -213,7 +321,7 @@ export default function MarketingPage() {
     <div style={{ paddingBottom: 40 }}>
       {/* Navigation tabs */}
       <div className="card" style={{ marginBottom: 24, padding: 12 }}>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, overflowX: "auto" }}>
           <button className={`btn ${activeTab === "campaigns" ? "btn-primary" : "btn-secondary"}`} onClick={() => setActiveTab("campaigns")}>
             📧 Marketing Campaigns
           </button>
@@ -222,6 +330,9 @@ export default function MarketingPage() {
           </button>
           <button className={`btn ${activeTab === "templates" ? "btn-primary" : "btn-secondary"}`} onClick={() => setActiveTab("templates")}>
             📝 Email Templates
+          </button>
+          <button className={`btn ${activeTab === "senders" ? "btn-primary" : "btn-secondary"}`} onClick={() => setActiveTab("senders")}>
+            🔧 Sender Domains & Workers
           </button>
         </div>
       </div>
@@ -367,6 +478,22 @@ export default function MarketingPage() {
         </div>
       )}
 
+      {/* Senders Section */}
+      {activeTab === "senders" && (
+        <div className="card" style={{ padding: "48px 24px", textAlign: "center" }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🌐</div>
+          <h3 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8, color: "var(--text-primary)" }}>
+            Sender Domains & Workers have moved!
+          </h3>
+          <p style={{ color: "var(--text-secondary)", fontSize: 14, maxWidth: 480, margin: "0 auto 24px auto", lineHeight: "1.5" }}>
+            All outbound email senders, Cloudflare Workers bindings, verified domains, and DNS records are now managed globally within Settings to serve both marketing campaigns and ticket automations across your whole storefront.
+          </p>
+          <a href="/settings" className="btn btn-primary" style={{ display: "inline-flex", fontWeight: "bold" }}>
+            🔧 Configure Global Senders in Settings ➔
+          </a>
+        </div>
+      )}
+
       {/* Create Campaign Modal */}
       {campaignModalOpen && (
         <div className="upload-modal-overlay" onClick={() => setCampaignModalOpen(false)}>
@@ -469,6 +596,69 @@ export default function MarketingPage() {
               <button className="btn btn-secondary" onClick={() => setImportModalOpen(false)}>Cancel</button>
               <button className="btn btn-primary" onClick={handleCsvImport} disabled={loading}>
                 🔄 Sync Contacts
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Mapped Domain Sender Modal */}
+      {senderModalOpen && (
+        <div className="upload-modal-overlay" onClick={() => setSenderModalOpen(false)}>
+          <div className="upload-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 520 }}>
+            <div className="upload-modal-header">
+              <div className="upload-modal-title">🔧 {editSenderId ? "Edit Sender Domain" : "Map Cloudflare Sender Domain"}</div>
+              <button className="upload-modal-close" onClick={() => setSenderModalOpen(false)}>✕</button>
+            </div>
+            <div className="upload-modal-body">
+              <div className="form-group">
+                <label className="form-label">Store Connection</label>
+                <select className="input" value={newSender.store_id} onChange={(e) => setNewSender({ ...newSender, store_id: e.target.value })} style={{ padding: "8px 12px" }}>
+                  <option value="WaiRaiders Store">WaiRaiders Store</option>
+                  <option value="Vulius Store">Vulius Store</option>
+                </select>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Sender Display Name</label>
+                <input className="input" placeholder="e.g. WaiRaiders Support" value={newSender.from_name} onChange={(e) => setNewSender({ ...newSender, from_name: e.target.value })} />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Outbound Sending Email</label>
+                <input className="input" type="email" placeholder="e.g. support@wairaiders.com" value={newSender.from_email} onChange={(e) => setNewSender({ ...newSender, from_email: e.target.value })} />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Inbound Reply-To Email</label>
+                <input className="input" type="email" placeholder="e.g. customer@wairaiders.com" value={newSender.reply_to_email} onChange={(e) => setNewSender({ ...newSender, reply_to_email: e.target.value })} />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Outbound Verified Domain</label>
+                <input className="input" placeholder="e.g. wairaiders.com" value={newSender.domain} onChange={(e) => setNewSender({ ...newSender, domain: e.target.value })} />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Outbound Gateway Provider</label>
+                <select className="input" value={newSender.provider} onChange={(e) => setNewSender({ ...newSender, provider: e.target.value as any })} style={{ padding: "8px 12px" }}>
+                  <option value="cloudflare">Cloudflare Workers Binding (paid)</option>
+                  <option value="resend">Resend API REST Adapter</option>
+                  <option value="smtp">Standard SMTP Gateway</option>
+                </select>
+              </div>
+
+              {newSender.provider !== "cloudflare" && (
+                <div className="form-group">
+                  <label className="form-label">{newSender.provider === "resend" ? "Resend API Token" : "SMTP Host String (host:port:user:pass)"}</label>
+                  <input className="input" type="password" placeholder={newSender.provider === "resend" ? "re_xxxxxxxxx" : "smtp.server.com:587:user:pass"} value={newSender.provider_config_ref} onChange={(e) => setNewSender({ ...newSender, provider_config_ref: e.target.value })} />
+                </div>
+              )}
+            </div>
+            <div className="upload-modal-footer">
+              <button className="btn btn-secondary" onClick={() => setSenderModalOpen(false)}>Cancel</button>
+              <button className="btn btn-primary" onClick={handleSaveSender} disabled={loading}>
+                💾 Save sender Domain
               </button>
             </div>
           </div>
