@@ -204,9 +204,9 @@ def send_tracking_number_email(order: Order, db: Session):
         
         header_html = f"""<!-- Premium Branded Logo Header -->
                     <tr>
-                        <td style="background: #ffffff; padding: 32px; text-align: center; border-bottom: 2px solid #f1f5f9;">
+                        <td style="background: #0f172a; padding: 32px; text-align: center; border-bottom: 2px solid #1e293b;">
                             <img src="{logo_url}" style="height: 55px; width: auto; max-width: 200px; display: inline-block; object-fit: contain;" alt="VULIUS Logo" />
-                            <p style="color: #64748b; margin: 8px 0 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em;">ORDER SHIPPED</p>
+                            <p style="color: #94a3b8; margin: 8px 0 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em;">ORDER SHIPPED</p>
                         </td>
                     </tr>"""
         footer_brand_text = "VULIUS Store"
@@ -1689,12 +1689,18 @@ def woocommerce_order_created_webhook(
     if store_key == "vulius":
         resolved_store_id = "Vulius Store"
         brand_name = "VULIUS"
-        # Dynamic Header using the official high-resolution logo image
-        header_html = """<!-- Premium Branded Logo Header -->
+        from config import settings
+        frontend_url = settings.FRONTEND_URL
+        if not frontend_url or "localhost" in frontend_url or "127.0.0.1" in frontend_url:
+            frontend_url = "https://product.justonetee.org"
+        logo_url = f"{frontend_url}/logo-vulius.png"
+        
+        # Dynamic Header using the official high-resolution logo image hosted on the frontend
+        header_html = f"""<!-- Premium Branded Logo Header -->
                     <tr>
-                        <td style="background: #ffffff; padding: 32px; text-align: center; border-bottom: 2px solid #f1f5f9;">
-                            <img src="https://vulius.com/wp-content/uploads/2023/07/logo-vulius-01-1400x630.png" style="height: 55px; width: auto; max-width: 200px; display: inline-block; object-fit: contain;" alt="VULIUS Logo" />
-                            <p style="color: #64748b; margin: 8px 0 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em;">ORDER CONFIRMED</p>
+                        <td style="background: #0f172a; padding: 32px; text-align: center; border-bottom: 2px solid #1e293b;">
+                            <img src="{logo_url}" style="height: 55px; width: auto; max-width: 200px; display: inline-block; object-fit: contain;" alt="VULIUS Logo" />
+                            <p style="color: #94a3b8; margin: 8px 0 0 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.15em;">ORDER CONFIRMED</p>
                         </td>
                     </tr>"""
         footer_brand_text = "VULIUS Store"
