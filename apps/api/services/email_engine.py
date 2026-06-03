@@ -19,8 +19,8 @@ class CloudflareWorkerProvider(EmailProvider):
 
     def send_email(self, from_name: str, from_email: str, recipient: str, subject: str, html_body: str, text_body: str = "", reply_to: str = None, headers: dict = None) -> bool:
         if not self.account_id or not self.api_token:
-            logger.warning("Cloudflare Worker Provider not configured fully. Simulating success.")
-            return True
+            logger.error("Cloudflare Worker Provider not configured: CLOUDFLARE_ACCOUNT_ID or CLOUDFLARE_API_TOKEN is missing.")
+            return False
 
         url = f"https://api.cloudflare.com/client/v4/accounts/{self.account_id}/email/sending/send"
         req_headers = {

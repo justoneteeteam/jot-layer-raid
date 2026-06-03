@@ -392,27 +392,22 @@ export default function SettingsPage() {
     }
     const payload = await request.json();
     
-    // Dispatch campaign message via Mailchannels REST Gateway
-    const res = await fetch("https://api.mailchannels.net/tx/v1/send", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        personalizations: [{
-          to: [{ email: payload.recipient }]
-        }],
-        from: {
-          name: payload.from_name,
-          email: payload.from_email
+    try {
+      // Send outbound email using the native paid Workers binding
+      await env.EMAIL.send({
+        to: [{ email: payload.recipient }],
+        from: { 
+          email: payload.from_email, 
+          name: payload.from_name 
         },
         subject: payload.subject,
-        content: [{
-          type: "text/html",
-          value: payload.html_body
-        }]
-      })
-    });
-
-    return new Response(await res.text(), { status: res.status });
+        html: payload.html_body,
+        text: payload.text_body || "Please view this email in an HTML-compatible client."
+      });
+      return new Response("Email sent successfully", { status: 200 });
+    } catch (err) {
+      return new Response(err.message, { status: 500 });
+    }
   }
 };`;
 
