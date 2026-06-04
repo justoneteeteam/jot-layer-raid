@@ -61,6 +61,9 @@ export default function MarketingPage() {
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [csvText, setCsvText] = useState("");
   
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [previewTemplate, setPreviewTemplate] = useState<Template | null>(null);
+  
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error">("success");
@@ -463,11 +466,25 @@ export default function MarketingPage() {
               <div style={{ gridColumn: "1/-1", textAlign: "center", color: "var(--text-secondary)", padding: 24 }}>No templates found.</div>
             ) : (
               templates.map((t) => (
-                <div key={t.id} className="card" style={{ border: "1px solid var(--border-default)", padding: 16 }}>
-                  <h3 style={{ margin: "0 0 8px 0", fontSize: 16, fontWeight: 600 }}>{t.name}</h3>
-                  <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>Subject: {t.subject}</div>
-                  <div style={{ background: "var(--bg-secondary)", borderRadius: 6, padding: 8, height: 100, overflow: "hidden", fontSize: 11, fontFamily: "monospace", color: "var(--text-secondary)", marginBottom: 12 }}>
-                    {t.body_html.substring(0, 150)}...
+                <div key={t.id} className="card" style={{ border: "1px solid var(--border-default)", padding: 16, display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
+                  <div>
+                    <h3 style={{ margin: "0 0 8px 0", fontSize: 16, fontWeight: 600 }}>{t.name}</h3>
+                    <div style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 12 }}>Subject: {t.subject}</div>
+                    <div style={{ background: "var(--bg-secondary)", borderRadius: 6, padding: 8, height: 100, overflow: "hidden", fontSize: 11, fontFamily: "monospace", color: "var(--text-secondary)", marginBottom: 12 }}>
+                      {t.body_html.substring(0, 150)}...
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 8 }}>
+                    <button 
+                      className="btn btn-secondary" 
+                      style={{ padding: "4px 10px", fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}
+                      onClick={() => {
+                        setPreviewTemplate(t);
+                        setPreviewModalOpen(true);
+                      }}
+                    >
+                      👁️ Preview Template
+                    </button>
                   </div>
                 </div>
               ))
@@ -765,6 +782,48 @@ export default function MarketingPage() {
               <button className="btn btn-primary" onClick={handleCsvImport} disabled={loading}>
                 🔄 Sync Contacts
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Preview Template Modal */}
+      {previewModalOpen && previewTemplate && (
+        <div className="upload-modal-overlay" onClick={() => setPreviewModalOpen(false)}>
+          <div className="upload-modal" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 680, width: "90vw" }}>
+            <div className="upload-modal-header">
+              <div className="upload-modal-title">👁️ Preview: {previewTemplate.name}</div>
+              <button className="upload-modal-close" onClick={() => setPreviewModalOpen(false)}>✕</button>
+            </div>
+            <div className="upload-modal-body" style={{ padding: "20px 24px" }}>
+              <div style={{ marginBottom: 16, borderBottom: "1px solid var(--border-default)", paddingBottom: 12 }}>
+                <strong style={{ color: "var(--text-primary)" }}>Subject Line:</strong> <span style={{ color: "var(--text-secondary)", marginLeft: 6 }}>{previewTemplate.subject}</span>
+              </div>
+              <div style={{ 
+                border: "1px solid var(--border-default)", 
+                borderRadius: 12, 
+                background: "#f1f5f9", 
+                padding: 16, 
+                display: "flex", 
+                justifyContent: "center"
+              }}>
+                <div style={{ 
+                  width: "100%", 
+                  maxWidth: 600, 
+                  background: "#ffffff", 
+                  borderRadius: 8, 
+                  boxShadow: "0 4px 12px rgba(0,0,0,0.05)", 
+                  maxHeight: 480,
+                  overflowY: "auto",
+                  border: "1px solid var(--border-default)"
+                }}>
+                  {/* Render template HTML directly */}
+                  <div dangerouslySetInnerHTML={{ __html: previewTemplate.body_html.replace("{customer_name}", "John Doe") }} />
+                </div>
+              </div>
+            </div>
+            <div className="upload-modal-footer">
+              <button className="btn btn-secondary" onClick={() => setPreviewModalOpen(false)}>Close Preview</button>
             </div>
           </div>
         </div>
