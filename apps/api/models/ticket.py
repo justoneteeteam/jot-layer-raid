@@ -13,4 +13,5 @@ class Ticket(Base):
     message = Column(Text, nullable=False)
     status = Column(String, default="open")  # open, pending, resolved
     replies = Column(Text, default="[]")  # Serialized JSON list of replies
+    recipient_email = Column(String, nullable=True, index=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

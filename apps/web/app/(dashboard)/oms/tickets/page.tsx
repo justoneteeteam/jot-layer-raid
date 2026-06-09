@@ -12,6 +12,7 @@ interface Ticket {
   message: string;
   status: string; // "open", "pending", "resolved"
   replies: string; // Serialized JSON string from DB
+  recipient_email?: string; // Recognized inbound email
   created_at: string;
 }
 
@@ -37,6 +38,16 @@ interface CustomerProfile {
   orders: OrderHistory[];
 }
 
+interface EmailSender {
+  id: number;
+  store_id: string;
+  provider: string;
+  from_name: string;
+  from_email: string;
+  domain: string;
+  status: string;
+}
+
 const formatTimelineDate = (dateStr: string) => {
   if (!dateStr) return "";
   try {
@@ -57,8 +68,8 @@ const parseReply = (rawReply: string) => {
   let timestamp = "";
   let message = rawReply;
   let align = "flex-end";
-  let bg = "var(--accent-light)";
-  let border = "1px solid var(--accent)";
+  let bg = "#f0fdfa"; // Teal tint
+  let border = "1px solid #ccfbf1";
   let textColor = "var(--text-primary)";
   let borderRadius = "12px 12px 0px 12px";
 
@@ -77,19 +88,30 @@ const parseReply = (rawReply: string) => {
   } else if (rawReply.startsWith("[Support Agent")) {
     sender = "👤 Support Agent";
     align = "flex-end";
-    bg = "var(--accent-light)";
-    border = "1px solid var(--accent)";
+    bg = "#eff6ff"; // Blue tint for manual support agent reply
+    border = "1px solid #bfdbfe";
     borderRadius = "12px 12px 0px 12px";
     
     const match = rawReply.match(/^\[Support Agent\s*(?:\|\s*([^\]]+))?\]\s*([\s\S]*)/);
     if (match) {
       timestamp = match[1] || "";
       message = match[2] || "";
+      
+      // If it contains "via email@domain.com", extract or keep it in sender/timestamp
+      if (timestamp && timestamp.includes("via ")) {
+        const parts = timestamp.split("via ");
+        const part0 = parts[0];
+        const part1 = parts[1];
+        if (part0 !== undefined && part1 !== undefined) {
+          timestamp = part0.trim();
+          sender = `👤 Support Agent (via ${part1.trim()})`;
+        }
+      }
     }
   } else if (rawReply.includes("[Instant AI Update]")) {
     sender = "🤖 JOT Logistics AI Assistant";
     align = "flex-end";
-    bg = "#f0fdf4";
+    bg = "#f0fdf4"; // Green tint for AI
     border = "1px solid #bbf7d0";
     textColor = "#166534";
     borderRadius = "12px 12px 0px 12px";
@@ -99,10 +121,24 @@ const parseReply = (rawReply: string) => {
   return { sender, timestamp, message, align, bg, border, textColor, borderRadius };
 };
 
-export default function EmailTicketsPage() {
+// Calculate time difference in hours to allocate SLA columns
+const getHoursSinceCreated = (dateStr: string) => {
+  if (!dateStr) return 0;
+  const created = new Date(dateStr);
+  const now = new Date();
+  return (now.getTime() - created.getTime()) / (1000 * 60 * 60);
+};
+
+export default function ZohoTicketsPage() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [senders, setSenders] = useState<EmailSender[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // Dashboard configuration states
   const [activeTicketId, setActiveTicketId] = useState<number | null>(null);
+  const [viewMode, setViewMode] = useState<"kanban" | "table">("kanban");
+  const [activeFilter, setActiveFilter] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState<string>("");
   
   // Right side CRM integration
   const [crmProfile, setCrmProfile] = useState<CustomerProfile | null>(null);
@@ -110,9 +146,21 @@ export default function EmailTicketsPage() {
   
   // Reply box state
   const [replyText, setReplyText] = useState("");
+  const [selectedFromEmail, setSelectedFromEmail] = useState("");
   const [replying, setReplying] = useState(false);
 
   const activeTicket = tickets.find((t) => t.id === activeTicketId);
+
+  // Fallback sender list if DB is empty
+  const defaultSenders: EmailSender[] = [
+    { id: -1, store_id: "WaiRaiders Store", provider: "cloudflare", from_name: "WaiRaiders Support", from_email: "contact@wairaiders.com", domain: "wairaiders.com", status: "active" },
+    { id: -2, store_id: "Vulius Store", provider: "cloudflare", from_name: "Vulius Support", from_email: "contact@vulius.com", domain: "vulius.com", status: "active" },
+    { id: -3, store_id: "JOT Support", provider: "cloudflare", from_name: "JOT Support", from_email: "customer@justonetee.org", domain: "justonetee.org", status: "active" }
+  ];
+
+  const getSenderList = () => {
+    return senders.length > 0 ? senders : defaultSenders;
+  };
 
   // Load tickets list
   const loadTickets = async () => {
@@ -122,19 +170,30 @@ export default function EmailTicketsPage() {
       if (res.ok) {
         const data = await res.json();
         setTickets(data);
-        if (data.length > 0 && activeTicketId === null) {
-          setActiveTicketId(data[0].id);
-        }
       }
     } catch (err) {
-      console.error(err);
+      console.error("Error loading tickets:", err);
     } finally {
       setLoading(false);
     }
   };
 
+  // Load sender identities
+  const loadSenders = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/marketing/senders`);
+      if (res.ok) {
+        const data = await res.json();
+        setSenders(data);
+      }
+    } catch (err) {
+      console.error("Error loading senders:", err);
+    }
+  };
+
   useEffect(() => {
     loadTickets();
+    loadSenders();
   }, []);
 
   // Load customer CRM orders on ticket switch
@@ -148,7 +207,7 @@ export default function EmailTicketsPage() {
         setCrmProfile(data);
       }
     } catch (err) {
-      console.error(err);
+      console.error("Error loading CRM context:", err);
     } finally {
       setCrmLoading(false);
     }
@@ -160,6 +219,37 @@ export default function EmailTicketsPage() {
     }
   }, [activeTicketId, tickets]);
 
+  // Handle auto outbound sender routing selection
+  useEffect(() => {
+    if (activeTicket) {
+      const recipient = (activeTicket.recipient_email || "").toLowerCase();
+      const allSenders = getSenderList();
+      
+      // 1. Check if recipient matches a sender from_email
+      let matched = allSenders.find((s) => recipient.includes(s.from_email.toLowerCase()) || s.from_email.toLowerCase().includes(recipient));
+      
+      // 2. If no direct email match, check store/domain match in recipient
+      if (!matched && recipient) {
+        matched = allSenders.find((s) => recipient.includes(s.domain.toLowerCase()));
+      }
+      
+      // 3. Check order history brand match if still no match
+      if (!matched && crmProfile && crmProfile.orders && crmProfile.orders.length > 0) {
+        const firstOrder = crmProfile.orders[0];
+        if (firstOrder) {
+          const storeId = (firstOrder.store_id || "").toLowerCase();
+          matched = allSenders.find((s) => storeId.includes(s.domain.toLowerCase()) || s.store_id.toLowerCase().includes(storeId));
+        }
+      }
+
+      if (matched) {
+        setSelectedFromEmail(matched.from_email);
+      } else {
+        setSelectedFromEmail(allSenders[0]?.from_email || "");
+      }
+    }
+  }, [activeTicketId, crmProfile]);
+
   // Submit manual reply
   const handleSubmitReply = async (newStatus: string) => {
     if (!activeTicket || !replyText.trim()) return;
@@ -170,14 +260,15 @@ export default function EmailTicketsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status: newStatus,
-          message: replyText
+          message: replyText,
+          from_email: selectedFromEmail
         }),
       });
 
       if (res.ok) {
         setReplyText("");
         alert(`Reply successfully submitted and status marked as ${newStatus}`);
-        loadTickets(); // Refresh ticket thread and status
+        loadTickets(); // Refresh ticket thread
       } else {
         alert("Failed to send reply.");
       }
@@ -189,7 +280,6 @@ export default function EmailTicketsPage() {
     }
   };
 
-  // Safe parse replies JSON
   const getTicketReplies = (ticket: Ticket): string[] => {
     if (!ticket.replies) return [];
     try {
@@ -199,14 +289,12 @@ export default function EmailTicketsPage() {
     }
   };
 
-  // Auto-Reply rules classification helper
   const matchesAutoReplyRule = (ticket: Ticket): boolean => {
     const text = (ticket.subject + " " + ticket.message).toLowerCase();
     const keywords = ["shipping status", "tracking", "track", "status", "where is my order"];
     return keywords.some((kw) => text.includes(kw));
   };
 
-  // Email Templates
   const handleSelectTemplate = (templateType: string) => {
     if (!crmProfile) {
       alert("Loading customer context first...");
@@ -219,300 +307,839 @@ export default function EmailTicketsPage() {
     
     let draft = "";
     if (templateType === "shipping") {
-      draft = `Hi ${name},\n\nYour order ${orderId} has shipped! Here is your USPS carrier tracking number: ${tracking}.\n\nYou can track the package directly on 17track here:\nhttps://www.17track.net/en/track?nums=${order?.tracking_number || ""}\n\nBest regards,\nJOT Support Team`;
+      draft = `Hi ${name},\n\nYour order ${orderId} has shipped! Here is your USPS carrier tracking number: ${tracking}.\n\nYou can track the package directly on 17track here:\nhttps://www.17track.net/en/track?nums=${order?.tracking_number || ""}\n\nBest regards,\nSupport Team`;
     } else if (templateType === "size") {
-      draft = `Hi ${name},\n\nThank you for reaching out! We have successfully updated your order ${orderId} to size L as requested. The logistics details are synchronized.\n\nBest regards,\nJOT Support Team`;
+      draft = `Hi ${name},\n\nThank you for reaching out! We have successfully updated your order ${orderId} to size L as requested. The logistics details are synchronized.\n\nBest regards,\nSupport Team`;
     } else if (templateType === "general") {
-      draft = `Hi ${name},\n\nThank you for your email! We are looking into your request regarding order ${orderId} and will follow up with details shortly.\n\nBest regards,\nJOT Support Team`;
+      draft = `Hi ${name},\n\nThank you for your email! We are looking into your request regarding order ${orderId} and will follow up with details shortly.\n\nBest regards,\nSupport Team`;
     }
     
     setReplyText(draft);
   };
 
-  return (
-    <div style={{ display: "flex", gap: "20px", height: "calc(100vh - 130px)", minHeight: "650px", overflow: "hidden" }}>
+  // Filter Tickets
+  const getFilteredTickets = () => {
+    return tickets.filter((t) => {
+      // 1. Search Query filter
+      const textMatch = 
+        t.subject.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        t.message.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        t.customer_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        t.customer_email.toLowerCase().includes(searchQuery.toLowerCase());
       
-      {/* 1. LEFT PANE: Conversation Tickets Feed */}
-      <div className="card" style={{ width: "320px", padding: "16px", display: "flex", flexDirection: "column", background: "white", flexShrink: 0 }}>
-        <div style={{ paddingBottom: "12px", borderBottom: "1px solid var(--border-default)", marginBottom: "12px" }}>
-          <h3 style={{ fontSize: "16px", fontWeight: "bold", margin: 0, color: "var(--text-primary)" }}>Email Inbox</h3>
-          <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "var(--text-secondary)" }}>Direct customer email threads</p>
-        </div>
+      if (!textMatch) return false;
 
-        {loading ? (
-          <div style={{ padding: "40px", textAlign: "center", color: "var(--text-secondary)", flex: 1 }}>
-            <div className="spinner" style={{ display: "inline-block", width: "20px", height: "20px", border: "2px solid #ccc", borderTopColor: "var(--accent)", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
-            <p style={{ marginTop: "12px", fontSize: "12px" }}>Opening mailbox...</p>
+      // 2. Active Sidebar filter
+      const rec = (t.recipient_email || "").toLowerCase();
+      const hours = getHoursSinceCreated(t.created_at);
+
+      if (activeFilter === "wairaiders") {
+        return rec.includes("wairaiders");
+      }
+      if (activeFilter === "vulius") {
+        return rec.includes("vulius");
+      }
+      if (activeFilter === "other") {
+        return rec !== "" && !rec.includes("wairaiders") && !rec.includes("vulius");
+      }
+      if (activeFilter === "overdue") {
+        return t.status === "open" && hours >= 24;
+      }
+      if (activeFilter === "due6h") {
+        return t.status === "open" && hours >= 18 && hours < 24;
+      }
+      if (activeFilter === "due12h") {
+        return t.status === "open" && hours < 18;
+      }
+      if (activeFilter === "open") {
+        return t.status === "open";
+      }
+      if (activeFilter === "pending") {
+        return t.status === "pending";
+      }
+      if (activeFilter === "resolved") {
+        return t.status === "resolved";
+      }
+      return true;
+    });
+  };
+
+  const filteredTickets = getFilteredTickets();
+
+  // Kanban groups
+  const overdueTickets = filteredTickets.filter((t) => t.status === "open" && getHoursSinceCreated(t.created_at) >= 24);
+  const due6hTickets = filteredTickets.filter((t) => t.status === "open" && getHoursSinceCreated(t.created_at) >= 18 && getHoursSinceCreated(t.created_at) < 24);
+  const due12hTickets = filteredTickets.filter((t) => t.status === "open" && getHoursSinceCreated(t.created_at) < 18);
+  const resolvedPendingTickets = filteredTickets.filter((t) => t.status !== "open");
+
+  // Get Store badge colors
+  const getRecipientBadgeStyle = (email?: string) => {
+    const rec = (email || "").toLowerCase();
+    if (rec.includes("wairaiders")) {
+      return { bg: "#ffedd5", text: "#ea580c", border: "1px solid #fed7aa", label: "WaiRaiders" };
+    }
+    if (rec.includes("vulius")) {
+      return { bg: "#f3e8ff", text: "#9333ea", border: "1px solid #e9d5ff", label: "Vulius" };
+    }
+    if (rec) {
+      return { bg: "#eff6ff", text: "#2563eb", border: "1px solid #bfdbfe", label: rec.split("@")[0] || "Support" };
+    }
+    return { bg: "#f3f4f6", text: "#4b5563", border: "1px solid #e5e7eb", label: "General" };
+  };
+
+  const getDomainFromEmail = (emailStr: string) => {
+    if (!emailStr || !emailStr.includes("@")) return "";
+    return emailStr.split("@")[1];
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "calc(100vh - 80px)", margin: "-24px", background: "#f8fafc" }}>
+      
+      {/* 1. ZOHO DESK HEADER TAB BAR */}
+      <div style={{ background: "#1e2229", height: "48px", display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 24px", flexShrink: 0, borderBottom: "2px solid #ea580c" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "24px" }}>
+          <span style={{ color: "#ffffff", fontWeight: 800, fontSize: "16px", letterSpacing: "0.05em", display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ fontSize: "20px" }}>🗃️</span> ZOHO DESK
+          </span>
+          <div style={{ display: "flex", gap: "16px", height: "100%" }}>
+            <button style={{ background: "transparent", border: "none", color: "#ffffff", borderBottom: "3px solid #ea580c", fontSize: "13px", fontWeight: "bold", padding: "0 8px", cursor: "pointer", height: "48px" }}>TICKETS</button>
+            <button style={{ background: "transparent", border: "none", color: "#9ca3af", fontSize: "13px", fontWeight: "medium", padding: "0 8px", cursor: "pointer", height: "48px" }} onClick={() => alert("Redirecting to KB...")}>KB</button>
+            <button style={{ background: "transparent", border: "none", color: "#9ca3af", fontSize: "13px", fontWeight: "medium", padding: "0 8px", cursor: "pointer", height: "48px" }} onClick={() => alert("Redirecting to Tasks...")}>TASKS</button>
+            <button style={{ background: "transparent", border: "none", color: "#9ca3af", fontSize: "13px", fontWeight: "medium", padding: "0 8px", cursor: "pointer", height: "48px" }} onClick={() => alert("Redirecting to Customers...")}>CUSTOMERS</button>
+            <button style={{ background: "transparent", border: "none", color: "#9ca3af", fontSize: "13px", fontWeight: "medium", padding: "0 8px", cursor: "pointer", height: "48px" }} onClick={() => alert("Redirecting to Reports...")}>REPORTS</button>
           </div>
-        ) : tickets.length === 0 ? (
-          <div style={{ padding: "40px", textAlign: "center", color: "var(--text-muted)", fontStyle: "italic", fontSize: "13px" }}>No emails available.</div>
-        ) : (
-          <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "8px" }}>
-            {tickets.map((t) => {
-              const isActive = activeTicketId === t.id;
-              const isOpen = t.status === "open";
-              const isResolved = t.status === "resolved";
-              
-              return (
-                <div
-                  key={t.id}
-                  onClick={() => setActiveTicketId(t.id)}
-                  style={{
-                    padding: "12px",
-                    borderRadius: "8px",
-                    border: isActive ? "1px solid var(--accent)" : "1px solid var(--border-default)",
-                    background: isActive ? "var(--accent-light)" : "var(--bg-secondary)",
-                    cursor: "pointer",
-                    transition: "all 0.15s ease"
-                  }}
-                  onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = "var(--bg-tertiary)"; }}
-                  onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = "var(--bg-secondary)"; }}
-                >
-                  <div style={{ display: "flex", justifyItems: "center", justifyContent: "space-between", marginBottom: "4px" }}>
-                    <span style={{ fontSize: "11px", fontWeight: "bold", textTransform: "uppercase", color: "var(--text-secondary)", maxWidth: "160px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      👤 {t.customer_name}
-                    </span>
-                    <span
-                      style={{
-                        display: "inline-block",
-                        width: "8px",
-                        height: "8px",
-                        borderRadius: "50%",
-                        background: isOpen ? "var(--error)" : isResolved ? "var(--success)" : "var(--warning)"
-                      }}
-                      title={`Status: ${t.status}`}
-                    />
-                  </div>
-                  <div style={{ fontSize: "13px", fontWeight: "bold", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.subject}</div>
-                  <p style={{ margin: "4px 0 0 0", fontSize: "11px", color: "var(--text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                    {t.message}
-                  </p>
-                </div>
-              );
-            })}
-          </div>
-        )}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
+          <span style={{ color: "#9ca3af", fontSize: "12px", background: "#374151", padding: "3px 8px", borderRadius: "4px", fontWeight: "bold" }}>zPhone Connected</span>
+          <div style={{ color: "#ffffff", fontSize: "16px", cursor: "pointer" }}>⚙️</div>
+          <div style={{ width: "28px", height: "28px", borderRadius: "50%", background: "#4f46e5", display: "flex", alignItems: "center", justifyContent: "center", color: "white", fontSize: "11px", fontWeight: "bold" }}>LP</div>
+        </div>
       </div>
 
-      {/* 2. MIDDLE PANE: Active Chat Thread Console */}
-      <div className="card" style={{ flex: 1, padding: "20px", display: "flex", flexDirection: "column", background: "white" }}>
-        {activeTicket ? (
-          <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-            {/* Subject Banner */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border-default)", paddingBottom: "12px", marginBottom: "12px" }}>
-              <div>
-                <h3 style={{ fontSize: "16px", fontWeight: "bold", color: "var(--text-primary)", margin: 0 }}>{activeTicket.subject}</h3>
-                <div style={{ fontSize: "12px", color: "var(--text-secondary)", marginTop: "2px" }}>
-                  From: <strong>{activeTicket.customer_name}</strong> ({activeTicket.customer_email})
-                </div>
-              </div>
-              <span
-                style={{
-                  padding: "3px 12px",
-                  borderRadius: "999px",
-                  fontSize: "11px",
-                  fontWeight: "bold",
-                  textTransform: "uppercase",
-                  background: activeTicket.status === "open" ? "#fee2e2" : activeTicket.status === "resolved" ? "#d1fae5" : "#fef3c7",
-                  color: activeTicket.status === "open" ? "#991b1b" : activeTicket.status === "resolved" ? "#065f46" : "#92400e"
-                }}
-              >
-                {activeTicket.status}
-              </span>
-            </div>
+      {/* 2. MAIN CONSOLE LAYOUT (SIDEBAR + MAIN AREA) */}
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        
+        {/* SIDEBAR VIEW SELECTOR */}
+        <div style={{ width: "240px", background: "#ffffff", borderRight: "1px solid #e2e8f0", display: "flex", flexDirection: "column", flexShrink: 0, padding: "16px 0", overflowY: "auto" }}>
+          
+          <div style={{ padding: "0 16px 12px 16px", borderBottom: "1px solid #f1f5f9", marginBottom: "12px" }}>
+            <h3 style={{ fontSize: "13px", fontWeight: "bold", margin: 0, color: "var(--text-primary)", letterSpacing: "0.03em" }}>VIEWS</h3>
+          </div>
 
-            {/* AI Rules Classifier Alert Header Card */}
-            {matchesAutoReplyRule(activeTicket) ? (
-              <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: "10px 12px", borderRadius: "8px", color: "#166534", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
-                <span>🤖</span>
-                <div>
-                  <strong>AI Rule Match (Shipping status Inquiry)</strong>: Automatically scanned customer email matching 'tracking' keywords and instantly resolved with carrier update.
-                </div>
-              </div>
-            ) : (
-              <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-default)", padding: "10px 12px", borderRadius: "8px", color: "var(--text-secondary)", fontSize: "13px", display: "flex", alignItems: "center", gap: "8px", marginBottom: "16px" }}>
-                <span>⏳</span>
-                <div>
-                  <strong>Awaiting Manual Reply</strong>: Keywords matching auto-replies not detected (Size/Custom Jersey update). Requires manual approval.
-                </div>
-              </div>
-            )}
+          <div style={{ display: "flex", flexDirection: "column", gap: "2px", padding: "0 8px" }}>
+            <button
+              onClick={() => { setActiveFilter("all"); setActiveTicketId(null); }}
+              style={{
+                display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "8px 12px", border: "none", borderRadius: "6px",
+                background: activeFilter === "all" ? "#f1f5f9" : "transparent", color: activeFilter === "all" ? "var(--accent)" : "var(--text-secondary)",
+                fontSize: "13px", fontWeight: activeFilter === "all" ? "600" : "500", cursor: "pointer", textAlign: "left", transition: "all 0.15s"
+              }}
+            >
+              <span>📂</span> All Tickets
+            </button>
+            <button
+              onClick={() => { setActiveFilter("wairaiders"); setActiveTicketId(null); }}
+              style={{
+                display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "8px 12px", border: "none", borderRadius: "6px",
+                background: activeFilter === "wairaiders" ? "#fff7ed" : "transparent", color: activeFilter === "wairaiders" ? "#ea580c" : "var(--text-secondary)",
+                fontSize: "13px", fontWeight: activeFilter === "wairaiders" ? "600" : "500", cursor: "pointer", textAlign: "left", transition: "all 0.15s"
+              }}
+            >
+              <span style={{ color: "#f97316" }}>🟠</span> WaiRaiders Store
+            </button>
+            <button
+              onClick={() => { setActiveFilter("vulius"); setActiveTicketId(null); }}
+              style={{
+                display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "8px 12px", border: "none", borderRadius: "6px",
+                background: activeFilter === "vulius" ? "#faf5ff" : "transparent", color: activeFilter === "vulius" ? "#9333ea" : "var(--text-secondary)",
+                fontSize: "13px", fontWeight: activeFilter === "vulius" ? "600" : "500", cursor: "pointer", textAlign: "left", transition: "all 0.15s"
+              }}
+            >
+              <span style={{ color: "#a855f7" }}>🟣</span> Vulius Store
+            </button>
+            <button
+              onClick={() => { setActiveFilter("other"); setActiveTicketId(null); }}
+              style={{
+                display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "8px 12px", border: "none", borderRadius: "6px",
+                background: activeFilter === "other" ? "#f0f9ff" : "transparent", color: activeFilter === "other" ? "#0284c7" : "var(--text-secondary)",
+                fontSize: "13px", fontWeight: activeFilter === "other" ? "600" : "500", cursor: "pointer", textAlign: "left", transition: "all 0.15s"
+              }}
+            >
+              <span style={{ color: "#3b82f6" }}>🔵</span> Other / JOT
+            </button>
+          </div>
 
-            {/* Conversation Messages */}
-            <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px", paddingRight: "4px", marginBottom: "16px" }}>
-              {/* Customer Initial Question Bubble */}
-              <div style={{ alignSelf: "flex-start", maxWidth: "85%", background: "var(--bg-secondary)", border: "1px solid var(--border-default)", padding: "14px 16px", borderRadius: "12px 12px 12px 0", color: "var(--text-primary)", fontSize: "14px", lineHeight: "1.5", whiteSpace: "pre-line" }}>
-                {activeTicket.message}
-                <div style={{ fontSize: "9px", color: "var(--text-muted)", textAlign: "right", marginTop: "6px" }}>
-                  {formatTimelineDate(activeTicket.created_at)}
-                </div>
-              </div>
+          <div style={{ padding: "20px 16px 12px 16px", borderBottom: "1px solid #f1f5f9", marginBottom: "12px" }}>
+            <h3 style={{ fontSize: "11px", fontWeight: "bold", margin: 0, color: "var(--text-muted)", letterSpacing: "0.05em", textTransform: "uppercase" }}>SLA COLUMNS</h3>
+          </div>
 
-              {/* Parsed replies thread */}
-              {getTicketReplies(activeTicket).map((reply, i) => {
-                const parsed = parseReply(reply);
-                return (
-                  <div
-                    key={i}
+          <div style={{ display: "flex", flexDirection: "column", gap: "2px", padding: "0 8px" }}>
+            <button
+              onClick={() => { setActiveFilter("overdue"); setActiveTicketId(null); }}
+              style={{
+                display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "8px 12px", border: "none", borderRadius: "6px",
+                background: activeFilter === "overdue" ? "#fef2f2" : "transparent", color: activeFilter === "overdue" ? "#dc2626" : "var(--text-secondary)",
+                fontSize: "13px", fontWeight: activeFilter === "overdue" ? "600" : "500", cursor: "pointer", textAlign: "left", transition: "all 0.15s"
+              }}
+            >
+              <span style={{ color: "#ef4444" }}>🔴</span> Overdue (&gt;24h)
+            </button>
+            <button
+              onClick={() => { setActiveFilter("due6h"); setActiveTicketId(null); }}
+              style={{
+                display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "8px 12px", border: "none", borderRadius: "6px",
+                background: activeFilter === "due6h" ? "#fffbeb" : "transparent", color: activeFilter === "due6h" ? "#d97706" : "var(--text-secondary)",
+                fontSize: "13px", fontWeight: activeFilter === "due6h" ? "600" : "500", cursor: "pointer", textAlign: "left", transition: "all 0.15s"
+              }}
+            >
+              <span style={{ color: "#f59e0b" }}>🟡</span> Due in 6 Hours
+            </button>
+            <button
+              onClick={() => { setActiveFilter("due12h"); setActiveTicketId(null); }}
+              style={{
+                display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "8px 12px", border: "none", borderRadius: "6px",
+                background: activeFilter === "due12h" ? "#eff6ff" : "transparent", color: activeFilter === "due12h" ? "#2563eb" : "var(--text-secondary)",
+                fontSize: "13px", fontWeight: activeFilter === "due12h" ? "600" : "500", cursor: "pointer", textAlign: "left", transition: "all 0.15s"
+              }}
+            >
+              <span style={{ color: "#3b82f6" }}>🔵</span> Due in 12h+
+            </button>
+          </div>
+
+          <div style={{ padding: "20px 16px 12px 16px", borderBottom: "1px solid #f1f5f9", marginBottom: "12px" }}>
+            <h3 style={{ fontSize: "11px", fontWeight: "bold", margin: 0, color: "var(--text-muted)", letterSpacing: "0.05em", textTransform: "uppercase" }}>STATUS FILTERS</h3>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "2px", padding: "0 8px" }}>
+            <button
+              onClick={() => { setActiveFilter("open"); setActiveTicketId(null); }}
+              style={{
+                display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "8px 12px", border: "none", borderRadius: "6px",
+                background: activeFilter === "open" ? "#f1f5f9" : "transparent", color: activeFilter === "open" ? "var(--accent)" : "var(--text-secondary)",
+                fontSize: "13px", fontWeight: activeFilter === "open" ? "600" : "500", cursor: "pointer", textAlign: "left"
+              }}
+            >
+              <span>🎟️</span> Open
+            </button>
+            <button
+              onClick={() => { setActiveFilter("pending"); setActiveTicketId(null); }}
+              style={{
+                display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "8px 12px", border: "none", borderRadius: "6px",
+                background: activeFilter === "pending" ? "#f1f5f9" : "transparent", color: activeFilter === "pending" ? "var(--accent)" : "var(--text-secondary)",
+                fontSize: "13px", fontWeight: activeFilter === "pending" ? "600" : "500", cursor: "pointer", textAlign: "left"
+              }}
+            >
+              <span>⏳</span> Pending
+            </button>
+            <button
+              onClick={() => { setActiveFilter("resolved"); setActiveTicketId(null); }}
+              style={{
+                display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "8px 12px", border: "none", borderRadius: "6px",
+                background: activeFilter === "resolved" ? "#f1f5f9" : "transparent", color: activeFilter === "resolved" ? "var(--accent)" : "var(--text-secondary)",
+                fontSize: "13px", fontWeight: activeFilter === "resolved" ? "600" : "500", cursor: "pointer", textAlign: "left"
+              }}
+            >
+              <span>✔️</span> Resolved
+            </button>
+          </div>
+
+          <div style={{ padding: "20px 16px 12px 16px", borderBottom: "1px solid #f1f5f9", marginBottom: "12px" }}>
+            <h3 style={{ fontSize: "11px", fontWeight: "bold", margin: 0, color: "var(--text-muted)", letterSpacing: "0.05em", textTransform: "uppercase" }}>DOMAIN IDENTITIES</h3>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px", padding: "0 16px" }}>
+            {getSenderList().map((sender) => (
+              <div key={sender.id} style={{ display: "flex", flexDirection: "column", gap: "2px", background: "#f8fafc", padding: "8px", borderRadius: "6px", border: "1px solid #e2e8f0" }}>
+                <span style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-primary)" }}>{sender.store_id}</span>
+                <span style={{ fontSize: "10px", color: "var(--text-secondary)", fontFamily: "monospace" }}>@{sender.domain}</span>
+                <span style={{ fontSize: "9px", color: "#16a34a", fontWeight: "bold", display: "flex", alignItems: "center", gap: "3px" }}>
+                  🟢 Verified Domain
+                </span>
+              </div>
+            ))}
+          </div>
+
+        </div>
+
+        {/* MAIN WORKSPACE AREA */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          
+          {/* DASHBOARD VIEW MODE OR TICKET CONSOLE */}
+          {!activeTicket ? (
+            
+            /* ==========================================================
+               A. TICKETS DASHBOARD VIEW (KANBAN / TABLE)
+               ========================================================== */
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", padding: "20px" }}>
+              
+              {/* Filter controls / Toolbar */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexShrink: 0 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  <h2 style={{ fontSize: "18px", fontWeight: "bold", color: "var(--text-primary)", margin: 0 }}>
+                    {activeFilter.toUpperCase()} TICKETS ({filteredTickets.length})
+                  </h2>
+                  <input
+                    type="text"
+                    placeholder="Search subject, body or customer..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    style={{ width: "280px", height: "36px", borderRadius: "8px", border: "1px solid #cbd5e1", padding: "0 12px", fontSize: "13px" }}
+                  />
+                </div>
+                
+                {/* View switcher */}
+                <div style={{ display: "flex", background: "#e2e8f0", padding: "3px", borderRadius: "8px" }}>
+                  <button
+                    onClick={() => setViewMode("kanban")}
                     style={{
-                      alignSelf: parsed.align as any,
-                      maxWidth: "85%",
-                      background: parsed.bg,
-                      border: parsed.border,
-                      padding: "14px 16px",
-                      borderRadius: parsed.borderRadius,
-                      color: parsed.textColor,
-                      fontSize: "14px",
-                      lineHeight: "1.5",
-                      whiteSpace: "pre-line"
+                      padding: "6px 12px", border: "none", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", cursor: "pointer",
+                      background: viewMode === "kanban" ? "#ffffff" : "transparent", color: viewMode === "kanban" ? "var(--text-primary)" : "var(--text-secondary)",
+                      boxShadow: viewMode === "kanban" ? "0 1px 3px rgba(0,0,0,0.1)" : "none", transition: "all 0.15s"
                     }}
                   >
-                    <div style={{ fontSize: "10px", color: parsed.textColor === "var(--text-primary)" ? "var(--text-secondary)" : parsed.textColor, fontWeight: "bold", marginBottom: "4px", textTransform: "uppercase", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px" }}>
-                      <span>{parsed.sender}</span>
-                      {parsed.timestamp && (
-                        <span style={{ fontSize: "9px", color: "var(--text-muted)", fontWeight: "normal" }}>
-                          {parsed.timestamp}
-                        </span>
+                    📊 Kanban View
+                  </button>
+                  <button
+                    onClick={() => setViewMode("table")}
+                    style={{
+                      padding: "6px 12px", border: "none", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", cursor: "pointer",
+                      background: viewMode === "table" ? "#ffffff" : "transparent", color: viewMode === "table" ? "var(--text-primary)" : "var(--text-secondary)",
+                      boxShadow: viewMode === "table" ? "0 1px 3px rgba(0,0,0,0.1)" : "none", transition: "all 0.15s"
+                    }}
+                  >
+                    📝 List View
+                  </button>
+                </div>
+              </div>
+
+              {loading ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1 }}>
+                  <div className="spinner" style={{ width: "32px", height: "32px", border: "3px solid #ccc", borderTopColor: "var(--accent)", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
+                  <p style={{ marginTop: "16px", color: "var(--text-secondary)" }}>Loading support ticket threads...</p>
+                </div>
+              ) : filteredTickets.length === 0 ? (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, background: "white", borderRadius: "12px", border: "1px solid #e2e8f0", padding: "40px" }}>
+                  <span style={{ fontSize: "48px" }}>📦</span>
+                  <h3 style={{ marginTop: "16px", fontSize: "16px", fontWeight: "bold" }}>No tickets found</h3>
+                  <p style={{ color: "var(--text-muted)", fontSize: "13px", marginTop: "4px" }}>No support tickets match the selected filters or search queries.</p>
+                </div>
+              ) : viewMode === "kanban" ? (
+                
+                /* KANBAN BOARD */
+                <div style={{ display: "flex", gap: "16px", flex: 1, overflowX: "auto", paddingBottom: "12px" }}>
+                  
+                  {/* Column 1: Overdue */}
+                  <div style={{ flex: 1, minWidth: "280px", maxWidth: "350px", background: "#f1f5f9", borderRadius: "12px", border: "1px solid #e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                    <div style={{ padding: "12px 16px", background: "#fef2f2", borderBottom: "3px solid #ef4444", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontWeight: "bold", color: "#991b1b", fontSize: "13px" }}>🔴 OVERDUE</span>
+                      <span style={{ background: "#fee2e2", color: "#991b1b", fontSize: "11px", fontWeight: "bold", padding: "2px 8px", borderRadius: "99px" }}>{overdueTickets.length}</span>
+                    </div>
+                    <div style={{ flex: 1, overflowY: "auto", padding: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {overdueTickets.map((t) => (
+                        <div
+                          key={t.id}
+                          onClick={() => setActiveTicketId(t.id)}
+                          style={{ background: "#ffffff", padding: "12px", borderRadius: "8px", border: "1px solid #e2e8f0", cursor: "pointer", transition: "transform 0.15s, box-shadow 0.15s", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}
+                          onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 4px 6px rgba(0,0,0,0.08)"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.05)"; }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                            <span style={{ fontSize: "11px", fontWeight: "bold", color: "#64748b" }}>#{t.id}</span>
+                            <span style={{ fontSize: "10px", padding: "2px 6px", borderRadius: "4px", background: getRecipientBadgeStyle(t.recipient_email).bg, color: getRecipientBadgeStyle(t.recipient_email).text, border: getRecipientBadgeStyle(t.recipient_email).border, fontWeight: "bold" }}>
+                              {getRecipientBadgeStyle(t.recipient_email).label}
+                            </span>
+                          </div>
+                          <h4 style={{ fontSize: "13px", fontWeight: "bold", margin: "0 0 6px 0", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.subject}</h4>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px", color: "var(--text-secondary)" }}>
+                            <span>👤 {t.customer_name}</span>
+                            <span style={{ fontSize: "9px", background: "#fee2e2", color: "#ef4444", padding: "1px 5px", borderRadius: "3px", fontWeight: "bold" }}>
+                              LATE BY {Math.floor(getHoursSinceCreated(t.created_at) / 24)}d
+                            </span>
+                          </div>
+                          
+                          {/* Domain Badges */}
+                          <div style={{ display: "flex", gap: "4px", marginTop: "8px", borderTop: "1px dashed #f1f5f9", paddingTop: "8px", flexWrap: "wrap" }}>
+                            {t.recipient_email && (
+                              <span style={{ fontSize: "9px", background: "#f8fafc", border: "1px solid #e2e8f0", padding: "1px 4px", borderRadius: "3px", color: "var(--text-secondary)" }}>
+                                📥 {getDomainFromEmail(t.recipient_email)}
+                              </span>
+                            )}
+                            <span style={{ fontSize: "9px", background: "#f8fafc", border: "1px solid #e2e8f0", padding: "1px 4px", borderRadius: "3px", color: "var(--text-secondary)" }}>
+                              👤 @{getDomainFromEmail(t.customer_email)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Column 2: Due in 6h */}
+                  <div style={{ flex: 1, minWidth: "280px", maxWidth: "350px", background: "#f1f5f9", borderRadius: "12px", border: "1px solid #e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                    <div style={{ padding: "12px 16px", background: "#fffbeb", borderBottom: "3px solid #d97706", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontWeight: "bold", color: "#92400e", fontSize: "13px" }}>🟡 DUE IN 6H</span>
+                      <span style={{ background: "#fef3c7", color: "#92400e", fontSize: "11px", fontWeight: "bold", padding: "2px 8px", borderRadius: "99px" }}>{due6hTickets.length}</span>
+                    </div>
+                    <div style={{ flex: 1, overflowY: "auto", padding: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {due6hTickets.map((t) => (
+                        <div
+                          key={t.id}
+                          onClick={() => setActiveTicketId(t.id)}
+                          style={{ background: "#ffffff", padding: "12px", borderRadius: "8px", border: "1px solid #e2e8f0", cursor: "pointer", transition: "transform 0.15s, box-shadow 0.15s", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}
+                          onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 4px 6px rgba(0,0,0,0.08)"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.05)"; }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                            <span style={{ fontSize: "11px", fontWeight: "bold", color: "#64748b" }}>#{t.id}</span>
+                            <span style={{ fontSize: "10px", padding: "2px 6px", borderRadius: "4px", background: getRecipientBadgeStyle(t.recipient_email).bg, color: getRecipientBadgeStyle(t.recipient_email).text, border: getRecipientBadgeStyle(t.recipient_email).border, fontWeight: "bold" }}>
+                              {getRecipientBadgeStyle(t.recipient_email).label}
+                            </span>
+                          </div>
+                          <h4 style={{ fontSize: "13px", fontWeight: "bold", margin: "0 0 6px 0", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.subject}</h4>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px", color: "var(--text-secondary)" }}>
+                            <span>👤 {t.customer_name}</span>
+                            <span style={{ fontSize: "9px", background: "#fef3c7", color: "#d97706", padding: "1px 5px", borderRadius: "3px", fontWeight: "bold" }}>
+                              DUE SOON
+                            </span>
+                          </div>
+                          
+                          {/* Domain Badges */}
+                          <div style={{ display: "flex", gap: "4px", marginTop: "8px", borderTop: "1px dashed #f1f5f9", paddingTop: "8px", flexWrap: "wrap" }}>
+                            {t.recipient_email && (
+                              <span style={{ fontSize: "9px", background: "#f8fafc", border: "1px solid #e2e8f0", padding: "1px 4px", borderRadius: "3px", color: "var(--text-secondary)" }}>
+                                📥 {getDomainFromEmail(t.recipient_email)}
+                              </span>
+                            )}
+                            <span style={{ fontSize: "9px", background: "#f8fafc", border: "1px solid #e2e8f0", padding: "1px 4px", borderRadius: "3px", color: "var(--text-secondary)" }}>
+                              👤 @{getDomainFromEmail(t.customer_email)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Column 3: Due in 12h+ */}
+                  <div style={{ flex: 1, minWidth: "280px", maxWidth: "350px", background: "#f1f5f9", borderRadius: "12px", border: "1px solid #e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                    <div style={{ padding: "12px 16px", background: "#eff6ff", borderBottom: "3px solid #3b82f6", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontWeight: "bold", color: "#1e40af", fontSize: "13px" }}>🔵 DUE &gt;12H (NEW)</span>
+                      <span style={{ background: "#dbeafe", color: "#1e40af", fontSize: "11px", fontWeight: "bold", padding: "2px 8px", borderRadius: "99px" }}>{due12hTickets.length}</span>
+                    </div>
+                    <div style={{ flex: 1, overflowY: "auto", padding: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {due12hTickets.map((t) => (
+                        <div
+                          key={t.id}
+                          onClick={() => setActiveTicketId(t.id)}
+                          style={{ background: "#ffffff", padding: "12px", borderRadius: "8px", border: "1px solid #e2e8f0", cursor: "pointer", transition: "transform 0.15s, box-shadow 0.15s", boxShadow: "0 1px 3px rgba(0,0,0,0.05)" }}
+                          onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 4px 6px rgba(0,0,0,0.08)"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 1px 3px rgba(0,0,0,0.05)"; }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                            <span style={{ fontSize: "11px", fontWeight: "bold", color: "#64748b" }}>#{t.id}</span>
+                            <span style={{ fontSize: "10px", padding: "2px 6px", borderRadius: "4px", background: getRecipientBadgeStyle(t.recipient_email).bg, color: getRecipientBadgeStyle(t.recipient_email).text, border: getRecipientBadgeStyle(t.recipient_email).border, fontWeight: "bold" }}>
+                              {getRecipientBadgeStyle(t.recipient_email).label}
+                            </span>
+                          </div>
+                          <h4 style={{ fontSize: "13px", fontWeight: "bold", margin: "0 0 6px 0", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.subject}</h4>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px", color: "var(--text-secondary)" }}>
+                            <span>👤 {t.customer_name}</span>
+                            <span style={{ fontSize: "9px", color: "#3b82f6", fontWeight: "bold" }}>
+                              NEW
+                            </span>
+                          </div>
+                          
+                          {/* Domain Badges */}
+                          <div style={{ display: "flex", gap: "4px", marginTop: "8px", borderTop: "1px dashed #f1f5f9", paddingTop: "8px", flexWrap: "wrap" }}>
+                            {t.recipient_email && (
+                              <span style={{ fontSize: "9px", background: "#f8fafc", border: "1px solid #e2e8f0", padding: "1px 4px", borderRadius: "3px", color: "var(--text-secondary)" }}>
+                                📥 {getDomainFromEmail(t.recipient_email)}
+                              </span>
+                            )}
+                            <span style={{ fontSize: "9px", background: "#f8fafc", border: "1px solid #e2e8f0", padding: "1px 4px", borderRadius: "3px", color: "var(--text-secondary)" }}>
+                              👤 @{getDomainFromEmail(t.customer_email)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Column 4: Resolved / Pending */}
+                  <div style={{ flex: 1, minWidth: "280px", maxWidth: "350px", background: "#f1f5f9", borderRadius: "12px", border: "1px solid #e2e8f0", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+                    <div style={{ padding: "12px 16px", background: "#d1fae5", borderBottom: "3px solid #10b981", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontWeight: "bold", color: "#065f46", fontSize: "13px" }}>✔️ RESOLVED / PENDING</span>
+                      <span style={{ background: "#a7f3d0", color: "#065f46", fontSize: "11px", fontWeight: "bold", padding: "2px 8px", borderRadius: "99px" }}>{resolvedPendingTickets.length}</span>
+                    </div>
+                    <div style={{ flex: 1, overflowY: "auto", padding: "12px", display: "flex", flexDirection: "column", gap: "8px" }}>
+                      {resolvedPendingTickets.map((t) => (
+                        <div
+                          key={t.id}
+                          onClick={() => setActiveTicketId(t.id)}
+                          style={{ background: "#ffffff", padding: "12px", borderRadius: "8px", border: "1px solid #e2e8f0", cursor: "pointer", opacity: 0.8, transition: "transform 0.15s, box-shadow 0.15s" }}
+                          onMouseEnter={(e) => { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 4px 6px rgba(0,0,0,0.08)"; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "none"; }}
+                        >
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "6px" }}>
+                            <span style={{ fontSize: "11px", fontWeight: "bold", color: "#64748b" }}>#{t.id}</span>
+                            <span style={{ fontSize: "10px", padding: "2px 6px", borderRadius: "4px", background: getRecipientBadgeStyle(t.recipient_email).bg, color: getRecipientBadgeStyle(t.recipient_email).text, border: getRecipientBadgeStyle(t.recipient_email).border, fontWeight: "bold" }}>
+                              {getRecipientBadgeStyle(t.recipient_email).label}
+                            </span>
+                          </div>
+                          <h4 style={{ fontSize: "13px", fontWeight: "bold", margin: "0 0 6px 0", color: "#64748b", textDecoration: t.status === "resolved" ? "line-through" : "none" }}>{t.subject}</h4>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "11px", color: "var(--text-secondary)" }}>
+                            <span>👤 {t.customer_name}</span>
+                            <span style={{ fontSize: "9px", background: t.status === "resolved" ? "#d1fae5" : "#fef3c7", color: t.status === "resolved" ? "#065f46" : "#b45309", padding: "1px 5px", borderRadius: "3px", fontWeight: "bold", textTransform: "uppercase" }}>
+                              {t.status}
+                            </span>
+                          </div>
+                          
+                          {/* Domain Badges */}
+                          <div style={{ display: "flex", gap: "4px", marginTop: "8px", borderTop: "1px dashed #f1f5f9", paddingTop: "8px", flexWrap: "wrap" }}>
+                            {t.recipient_email && (
+                              <span style={{ fontSize: "9px", background: "#f8fafc", border: "1px solid #e2e8f0", padding: "1px 4px", borderRadius: "3px", color: "var(--text-secondary)" }}>
+                                📥 {getDomainFromEmail(t.recipient_email)}
+                              </span>
+                            )}
+                            <span style={{ fontSize: "9px", background: "#f8fafc", border: "1px solid #e2e8f0", padding: "1px 4px", borderRadius: "3px", color: "var(--text-secondary)" }}>
+                              👤 @{getDomainFromEmail(t.customer_email)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                </div>
+              ) : (
+                
+                /* TABLE / LIST VIEW */
+                <div style={{ flex: 1, background: "white", borderRadius: "12px", border: "1px solid #e2e8f0", overflowY: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ padding: "12px 16px", borderBottom: "1px solid #cbd5e1", textAlign: "left", fontSize: "11px", fontWeight: "bold" }}>TICKET ID</th>
+                        <th style={{ padding: "12px 16px", borderBottom: "1px solid #cbd5e1", textAlign: "left", fontSize: "11px", fontWeight: "bold" }}>CUSTOMER</th>
+                        <th style={{ padding: "12px 16px", borderBottom: "1px solid #cbd5e1", textAlign: "left", fontSize: "11px", fontWeight: "bold" }}>INBOUND ROUTE</th>
+                        <th style={{ padding: "12px 16px", borderBottom: "1px solid #cbd5e1", textAlign: "left", fontSize: "11px", fontWeight: "bold" }}>SUBJECT</th>
+                        <th style={{ padding: "12px 16px", borderBottom: "1px solid #cbd5e1", textAlign: "left", fontSize: "11px", fontWeight: "bold" }}>STATUS</th>
+                        <th style={{ padding: "12px 16px", borderBottom: "1px solid #cbd5e1", textAlign: "left", fontSize: "11px", fontWeight: "bold" }}>DATE</th>
+                        <th style={{ padding: "12px 16px", borderBottom: "1px solid #cbd5e1", textAlign: "left", fontSize: "11px", fontWeight: "bold" }}>ACTION</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredTickets.map((t) => {
+                        const recBadge = getRecipientBadgeStyle(t.recipient_email);
+                        return (
+                          <tr key={t.id} onClick={() => setActiveTicketId(t.id)} style={{ cursor: "pointer", borderBottom: "1px solid #f1f5f9" }} className="table-row-hover">
+                            <td style={{ padding: "12px 16px", fontSize: "13px", fontWeight: "bold", color: "#64748b" }}>#{t.id}</td>
+                            <td style={{ padding: "12px 16px", fontSize: "13px" }}>
+                              <div style={{ fontWeight: "600" }}>{t.customer_name}</div>
+                              <div style={{ fontSize: "11px", color: "var(--text-muted)", fontFamily: "monospace" }}>{t.customer_email}</div>
+                            </td>
+                            <td style={{ padding: "12px 16px", fontSize: "13px" }}>
+                              <span style={{ fontSize: "11px", padding: "3px 8px", borderRadius: "4px", background: recBadge.bg, color: recBadge.text, border: recBadge.border, fontWeight: "bold" }}>
+                                {t.recipient_email || "General Intake"}
+                              </span>
+                            </td>
+                            <td style={{ padding: "12px 16px", fontSize: "13px", fontWeight: "600", maxWidth: "250px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                              {t.subject}
+                            </td>
+                            <td style={{ padding: "12px 16px", fontSize: "13px" }}>
+                              <span style={{
+                                padding: "2px 8px", borderRadius: "99px", fontSize: "11px", fontWeight: "bold", textTransform: "uppercase",
+                                background: t.status === "open" ? "#fee2e2" : t.status === "resolved" ? "#d1fae5" : "#fef3c7",
+                                color: t.status === "open" ? "#dc2626" : t.status === "resolved" ? "#065f46" : "#d97706"
+                              }}>
+                                {t.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: "12px 16px", fontSize: "12px", color: "var(--text-secondary)" }}>
+                              {formatTimelineDate(t.created_at)}
+                            </td>
+                            <td style={{ padding: "12px 16px" }}>
+                              <button className="btn btn-secondary" style={{ padding: "4px 8px", fontSize: "11px" }}>Open Console</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+              )}
+
+            </div>
+          ) : (
+            
+            /* ==========================================================
+               B. ACTIVE TICKET CONSOLE SPLIT VIEW (CHAT + CRM HUB)
+               ========================================================== */
+            <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+              
+              {/* MIDDLE CONSOLE PANE (TICKET THREAD & CONVERSATION) */}
+              <div style={{ flex: 1, padding: "20px", display: "flex", flexDirection: "column", background: "white", borderRight: "1px solid #e2e8f0" }}>
+                
+                {/* Back button and Subject details */}
+                <div style={{ display: "flex", flexDirection: "column", borderBottom: "1px solid var(--border-default)", paddingBottom: "12px", marginBottom: "12px", gap: "8px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <button
+                      onClick={() => setActiveTicketId(null)}
+                      style={{ background: "#f1f5f9", border: "1px solid #cbd5e1", padding: "6px 12px", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", gap: "6px" }}
+                    >
+                      ⬅️ Back to Dashboard
+                    </button>
+                    <span
+                      style={{
+                        padding: "3px 12px", borderRadius: "999px", fontSize: "11px", fontWeight: "bold", textTransform: "uppercase",
+                        background: activeTicket.status === "open" ? "#fee2e2" : activeTicket.status === "resolved" ? "#d1fae5" : "#fef3c7",
+                        color: activeTicket.status === "open" ? "#dc2626" : activeTicket.status === "resolved" ? "#065f46" : "#d97706"
+                      }}
+                    >
+                      {activeTicket.status}
+                    </span>
+                  </div>
+
+                  <div>
+                    <h3 style={{ fontSize: "15px", fontWeight: "bold", color: "var(--text-primary)", margin: 0 }}>
+                      Ticket #{activeTicket.id}: {activeTicket.subject}
+                    </h3>
+                    
+                    {/* Domain recognition headers */}
+                    <div style={{ display: "flex", gap: "8px", alignItems: "center", marginTop: "4px", flexWrap: "wrap" }}>
+                      <span style={{ fontSize: "11px", color: "var(--text-secondary)" }}>
+                        From: <strong>{activeTicket.customer_name}</strong> ({activeTicket.customer_email})
+                      </span>
+                      <span style={{ color: "#cbd5e1", fontSize: "12px" }}>|</span>
+                      <span style={{ fontSize: "11px", padding: "2px 6px", borderRadius: "4px", background: getRecipientBadgeStyle(activeTicket.recipient_email).bg, color: getRecipientBadgeStyle(activeTicket.recipient_email).text, border: getRecipientBadgeStyle(activeTicket.recipient_email).border, fontWeight: "bold" }}>
+                        📥 Recipient Inbox: {activeTicket.recipient_email || "customer@justonetee.org"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* AI Rules Classifier Alert */}
+                {matchesAutoReplyRule(activeTicket) ? (
+                  <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: "10px 12px", borderRadius: "8px", color: "#166534", fontSize: "12px", display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px", flexShrink: 0 }}>
+                    <span>🤖</span>
+                    <div>
+                      <strong>AI Rule Match (Shipping Inquiry)</strong>: Scanned keywords matching order updates and resolved instantly.
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-default)", padding: "10px 12px", borderRadius: "8px", color: "var(--text-secondary)", fontSize: "12px", display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px", flexShrink: 0 }}>
+                    <span>⏳</span>
+                    <div>
+                      <strong>Awaiting Manual Reply</strong>: Keywords matching auto-replies not detected (Size/Custom jersey update). Outbound routing verified.
+                    </div>
+                  </div>
+                )}
+
+                {/* Conversation messages scroll area */}
+                <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "12px", paddingRight: "4px", marginBottom: "16px" }}>
+                  
+                  {/* Customer question bubble */}
+                  <div style={{ alignSelf: "flex-start", maxWidth: "85%", background: "var(--bg-secondary)", border: "1px solid var(--border-default)", padding: "12px 14px", borderRadius: "12px 12px 12px 0", color: "var(--text-primary)", fontSize: "13px", lineHeight: "1.5", whiteSpace: "pre-line" }}>
+                    <div style={{ fontSize: "10px", color: "var(--text-secondary)", fontWeight: "bold", marginBottom: "4px" }}>
+                      👤 {activeTicket.customer_name} &lt;{activeTicket.customer_email}&gt;
+                    </div>
+                    {activeTicket.message}
+                    <div style={{ fontSize: "9px", color: "var(--text-muted)", textAlign: "right", marginTop: "6px" }}>
+                      {formatTimelineDate(activeTicket.created_at)}
+                    </div>
+                  </div>
+
+                  {/* Thread replies */}
+                  {getTicketReplies(activeTicket).map((reply, i) => {
+                    const parsed = parseReply(reply);
+                    return (
+                      <div
+                        key={i}
+                        style={{
+                          alignSelf: parsed.align as any,
+                          maxWidth: "85%",
+                          background: parsed.bg,
+                          border: parsed.border,
+                          padding: "12px 14px",
+                          borderRadius: parsed.borderRadius,
+                          color: parsed.textColor,
+                          fontSize: "13px",
+                          lineHeight: "1.5",
+                          whiteSpace: "pre-line"
+                        }}
+                      >
+                        <div style={{ fontSize: "10px", color: parsed.textColor === "var(--text-primary)" ? "var(--text-secondary)" : parsed.textColor, fontWeight: "bold", marginBottom: "4px", textTransform: "uppercase", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px" }}>
+                          <span>{parsed.sender}</span>
+                          {parsed.timestamp && (
+                            <span style={{ fontSize: "9px", color: "var(--text-muted)", fontWeight: "normal" }}>
+                              {parsed.timestamp}
+                            </span>
+                          )}
+                        </div>
+                        {parsed.message}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Reply Drafting console */}
+                <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: "12px", marginTop: "auto", flexShrink: 0 }}>
+                  
+                  {/* Outbound email selector & Templates panel */}
+                  <div style={{ display: "flex", gap: "12px", alignItems: "center", marginBottom: "10px", flexWrap: "wrap", justifyContent: "space-between", background: "#f8fafc", padding: "8px", borderRadius: "8px", border: "1px solid #e2e8f0" }}>
+                    
+                    {/* Outbound Domain recognition */}
+                    <div style={{ display: "flex", gap: "6px", alignItems: "center" }}>
+                      <span style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)" }}>📤 REPLY FROM:</span>
+                      <select
+                        value={selectedFromEmail}
+                        onChange={(e) => setSelectedFromEmail(e.target.value)}
+                        style={{ padding: "4px 8px", borderRadius: "6px", border: "1px solid #cbd5e1", fontSize: "11px", fontWeight: "bold", background: "white", outline: "none" }}
+                      >
+                        {getSenderList().map((sender) => (
+                          <option key={sender.id} value={sender.from_email}>
+                            {sender.from_name} ({sender.from_email})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Email templates quick buttons */}
+                    <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                      <span style={{ fontSize: "10px", fontWeight: "bold", color: "var(--text-secondary)" }}>📄 TEMPLATES:</span>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectTemplate("shipping")}
+                        style={{ padding: "3px 8px", background: "white", border: "1px solid #cbd5e1", borderRadius: "4px", fontSize: "10px", cursor: "pointer", color: "var(--text-primary)" }}
+                      >
+                        🚚 Shipping
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectTemplate("size")}
+                        style={{ padding: "3px 8px", background: "white", border: "1px solid #cbd5e1", borderRadius: "4px", fontSize: "10px", cursor: "pointer", color: "var(--text-primary)" }}
+                      >
+                        🎽 Size Change
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleSelectTemplate("general")}
+                        style={{ padding: "3px 8px", background: "white", border: "1px solid #cbd5e1", borderRadius: "4px", fontSize: "10px", cursor: "pointer", color: "var(--text-primary)" }}
+                      >
+                        💬 General
+                      </button>
+                    </div>
+
+                  </div>
+
+                  <textarea
+                    value={replyText}
+                    onChange={(e) => setReplyText(e.target.value)}
+                    placeholder={`Reply to ${activeTicket.customer_name} from ${selectedFromEmail}...`}
+                    style={{ width: "100%", height: "80px", padding: "10px", borderRadius: "8px", border: "1px solid var(--border-default)", background: "white", fontSize: "13px", resize: "none", marginBottom: "8px", fontFamily: "inherit" }}
+                  />
+
+                  <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+                    <button
+                      onClick={() => handleSubmitReply("pending")}
+                      disabled={replying || !replyText.trim()}
+                      className="btn btn-secondary"
+                      style={{ height: "34px", padding: "0 12px", fontSize: "12px" }}
+                    >
+                      Send & Keep Open
+                    </button>
+                    <button
+                      onClick={() => handleSubmitReply("resolved")}
+                      disabled={replying || !replyText.trim()}
+                      className="btn btn-primary"
+                      style={{ height: "34px", padding: "0 12px", fontSize: "12px" }}
+                    >
+                      {replying ? "Sending..." : "✔️ Send & Resolve"}
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+
+              {/* RIGHT PANE: CRM BUYER HISTORY DETAILS HUB */}
+              <div style={{ width: "320px", padding: "20px", display: "flex", flexDirection: "column", background: "#f8fafc", flexShrink: 0, overflowY: "auto" }}>
+                
+                <div style={{ paddingBottom: "8px", borderBottom: "1px solid var(--border-default)", marginBottom: "12px" }}>
+                  <h3 style={{ fontSize: "12px", fontWeight: "bold", margin: 0, color: "var(--text-primary)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Linked Buyer CRM</h3>
+                  <p style={{ margin: "2px 0 0 0", fontSize: "10px", color: "var(--text-secondary)" }}>Linked via customer email address</p>
+                </div>
+
+                {crmLoading ? (
+                  <div style={{ padding: "40px", textAlign: "center", color: "var(--text-secondary)", flex: 1 }}>
+                    <div className="spinner" style={{ display: "inline-block", width: "16px", height: "16px", border: "2px solid #ccc", borderTopColor: "var(--accent)", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
+                    <p style={{ marginTop: "12px", fontSize: "11px" }}>Loading customer order history...</p>
+                  </div>
+                ) : crmProfile ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                    
+                    {/* Customer Profile Card */}
+                    <div style={{ background: "white", padding: "10px", borderRadius: "8px", border: "1px solid var(--border-default)", fontSize: "11px" }}>
+                      <div style={{ fontWeight: "bold", fontSize: "13px", color: "var(--text-primary)" }}>{crmProfile.name}</div>
+                      <div style={{ color: "var(--text-secondary)", marginTop: "2px" }}>{crmProfile.email}</div>
+                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: "8px", fontWeight: "bold", borderTop: "1px dashed var(--border-default)", paddingTop: "8px" }}>
+                        <span>CRM Lifetime Spent:</span>
+                        <span style={{ color: "var(--accent)" }}>${crmProfile.total_spent.toFixed(2)}</span>
+                      </div>
+                    </div>
+
+                    {/* Orders listing */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                      <div style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)", textTransform: "uppercase" }}>Orders ({crmProfile.orders.length})</div>
+                      {crmProfile.orders.length === 0 ? (
+                        <div style={{ fontSize: "11px", color: "var(--text-muted)", fontStyle: "italic", textAlign: "center", padding: "20px" }}>No orders exist for this buyer.</div>
+                      ) : (
+                        crmProfile.orders.map((o) => {
+                          const isWai = (o.store_id || "").toLowerCase().includes("wairaiders");
+                          return (
+                            <div key={o.id} style={{ border: "1px solid var(--border-default)", borderRadius: "8px", padding: "10px", background: "white" }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", fontWeight: "bold", fontSize: "11px", color: "var(--text-primary)" }}>
+                                <span>Order {o.order_id}</span>
+                                <span>${o.revenue.toFixed(2)}</span>
+                              </div>
+                              <div style={{ fontSize: "10px", color: "var(--text-secondary)", marginTop: "2px" }}>{o.product_name}</div>
+                              <div style={{ fontSize: "9px", color: "var(--text-muted)", background: "var(--bg-secondary)", padding: "4px", borderRadius: "3px", margin: "4px 0" }}>
+                                {o.variant}
+                              </div>
+                              
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "6px", fontSize: "10px" }}>
+                                <span style={{ fontWeight: "bold", color: isWai ? "#ea580c" : "#9333ea" }}>
+                                  🏢 {isWai ? "WaiRaiders Store" : "Vulius Store"}
+                                </span>
+                                <span style={{ fontWeight: "bold", color: o.shipping_status === "delivered" ? "var(--success)" : o.shipping_status === "in transit" ? "var(--info)" : "var(--warning)", textTransform: "uppercase", fontSize: "9px" }}>
+                                  📦 {o.shipping_status}
+                                </span>
+                              </div>
+                              {o.tracking_number ? (
+                                <div style={{ fontSize: "9px", background: "#f0fdf4", padding: "4px 6px", borderRadius: "3px", marginTop: "6px", fontFamily: "monospace", color: "var(--success)", border: "1px solid #bbf7d0", fontWeight: "bold" }}>
+                                  🚚 {o.tracking_number}
+                                </div>
+                              ) : (
+                                <div style={{ fontSize: "10px", color: "var(--text-muted)", fontStyle: "italic", marginTop: "6px" }}>
+                                  Awaiting tracking code...
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
                       )}
                     </div>
-                    {parsed.message}
+
                   </div>
-                );
-              })}
-            </div>
+                ) : (
+                  <div style={{ fontSize: "11px", color: "var(--text-muted)", fontStyle: "italic", textAlign: "center", padding: "20px" }}>No buyer profile linked.</div>
+                )}
 
-            {/* Reply Drafting Editor Box */}
-            <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: "12px", marginTop: "auto" }}>
-              
-              {/* Email Templates Selector Panel */}
-              <div style={{ display: "flex", gap: "8px", alignItems: "center", marginBottom: "10px", flexWrap: "wrap" }}>
-                <span style={{ fontSize: "11px", fontWeight: "bold", color: "var(--text-secondary)", textTransform: "uppercase" }}>📄 Use Template:</span>
-                <button
-                  type="button"
-                  onClick={() => handleSelectTemplate("shipping")}
-                  style={{ padding: "4px 10px", background: "var(--bg-secondary)", border: "1px solid var(--border-default)", borderRadius: "12px", fontSize: "11px", cursor: "pointer", color: "var(--text-primary)", transition: "background 0.15s" }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--bg-tertiary)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "var(--bg-secondary)"}
-                >
-                  🚚 Shipping Status Update
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectTemplate("size")}
-                  style={{ padding: "4px 10px", background: "var(--bg-secondary)", border: "1px solid var(--border-default)", borderRadius: "12px", fontSize: "11px", cursor: "pointer", color: "var(--text-primary)", transition: "background 0.15s" }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--bg-tertiary)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "var(--bg-secondary)"}
-                >
-                  🎽 Size Change Confirm
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleSelectTemplate("general")}
-                  style={{ padding: "4px 10px", background: "var(--bg-secondary)", border: "1px solid var(--border-default)", borderRadius: "12px", fontSize: "11px", cursor: "pointer", color: "var(--text-primary)", transition: "background 0.15s" }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = "var(--bg-tertiary)"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = "var(--bg-secondary)"}
-                >
-                  💬 General Support
-                </button>
               </div>
 
-              <textarea
-                value={replyText}
-                onChange={(e) => setReplyText(e.target.value)}
-                placeholder={`Draft your reply to ${activeTicket.customer_name}...`}
-                style={{ width: "100%", height: "90px", padding: "12px", borderRadius: "8px", border: "1px solid var(--border-default)", background: "white", fontSize: "13px", resize: "none", marginBottom: "12px", fontFamily: "inherit" }}
-              />
-              <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
-                <button
-                  onClick={() => handleSubmitReply("pending")}
-                  disabled={replying || !replyText.trim()}
-                  className="btn btn-secondary"
-                  style={{ height: "38px" }}
-                >
-                  Send & Keep Open
-                </button>
-                <button
-                  onClick={() => handleSubmitReply("resolved")}
-                  disabled={replying || !replyText.trim()}
-                  className="btn btn-primary"
-                  style={{ height: "38px" }}
-                >
-                  {replying ? "Sending..." : "✔️ Send & Resolve Ticket"}
-                </button>
-              </div>
             </div>
-          </div>
-        ) : (
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", flex: 1, color: "var(--text-muted)", fontStyle: "italic" }}>
-            Select an email conversation thread to reply.
-          </div>
-        )}
-      </div>
 
-      {/* 3. RIGHT PANE: Linked Buyer Order Details Hub */}
-      <div className="card" style={{ width: "350px", padding: "20px", display: "flex", flexDirection: "column", background: "white", flexShrink: 0, overflowY: "auto" }}>
-        <div style={{ paddingBottom: "12px", borderBottom: "1px solid var(--border-default)", marginBottom: "16px" }}>
-          <h3 style={{ fontSize: "14px", fontWeight: "bold", margin: 0, color: "var(--text-primary)", textTransform: "uppercase" }}>Linked Store Orders</h3>
-          <p style={{ margin: "2px 0 0 0", fontSize: "11px", color: "var(--text-secondary)" }}>Linked automatically via buyer email address</p>
+          )}
+
         </div>
 
-        {crmLoading ? (
-          <div style={{ padding: "40px", textAlign: "center", color: "var(--text-secondary)", flex: 1 }}>
-            <div className="spinner" style={{ display: "inline-block", width: "16px", height: "16px", border: "2px solid #ccc", borderTopColor: "var(--accent)", borderRadius: "50%", animation: "spin 1s linear infinite" }} />
-            <p style={{ marginTop: "12px", fontSize: "11px" }}>Linking customer orders...</p>
-          </div>
-        ) : crmProfile ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-            {/* Buyer lifetime statistics card */}
-            <div style={{ background: "var(--bg-secondary)", padding: "12px", borderRadius: "8px", border: "1px solid var(--border-default)", fontSize: "12px" }}>
-              <div style={{ fontWeight: "bold", fontSize: "14px", color: "var(--text-primary)" }}>{crmProfile.name}</div>
-              <div style={{ color: "var(--text-secondary)", marginTop: "2px" }}>{crmProfile.email}</div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginTop: "8px", fontWeight: "bold", borderTop: "1px dashed var(--border-default)", paddingTop: "8px" }}>
-                <span>Lifetime spent:</span>
-                <span style={{ color: "var(--accent)" }}>${crmProfile.total_spent.toFixed(2)}</span>
-              </div>
-            </div>
-
-            {/* List of their orders */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
-              {crmProfile.orders.length === 0 ? (
-                <div style={{ fontSize: "12px", color: "var(--text-muted)", fontStyle: "italic", textAlign: "center", padding: "20px" }}>No orders exist for this email.</div>
-              ) : (
-                crmProfile.orders.map((o) => (
-                  <div key={o.id} style={{ border: "1px solid var(--border-default)", borderRadius: "8px", padding: "12px", background: "white" }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", fontWeight: "bold", fontSize: "12px", color: "var(--text-primary)" }}>
-                      <span>Order {o.order_id} ({o.order_name})</span>
-                      <span>${o.revenue.toFixed(2)}</span>
-                    </div>
-                    <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "4px" }}>{o.product_name}</div>
-                    <div style={{ fontSize: "10px", color: "var(--text-muted)", whiteSpace: "pre-line", margin: "6px 0", background: "var(--bg-secondary)", padding: "6px", borderRadius: "4px" }}>
-                      {o.variant}
-                    </div>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "8px", fontSize: "11px" }}>
-                      <span style={{ fontWeight: "bold", color: "var(--accent)" }}>
-                        🏢 {o.store_id}
-                      </span>
-                      <span style={{ fontWeight: "bold", color: o.shipping_status === "delivered" ? "var(--success)" : o.shipping_status === "in transit" ? "var(--info)" : "var(--warning)" }}>
-                        📦 {o.shipping_status.toUpperCase()}
-                      </span>
-                    </div>
-                    {o.tracking_number ? (
-                      <div style={{ fontSize: "11px", background: "#f0fdf4", padding: "6px 8px", borderRadius: "4px", marginTop: "8px", fontFamily: "monospace", color: "var(--success)", border: "1px solid #bbf7d0", fontWeight: "bold" }}>
-                        🚚 {o.tracking_number}
-                      </div>
-                    ) : (
-                      <div style={{ fontSize: "11px", color: "var(--text-muted)", fontStyle: "italic", marginTop: "8px" }}>
-                        Awaiting carrier tracking number...
-                      </div>
-                    )}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        ) : (
-          <div style={{ fontSize: "12px", color: "var(--text-muted)", fontStyle: "italic", textAlign: "center", padding: "20px" }}>No buyer profiles linked.</div>
-        )}
       </div>
 
     </div>

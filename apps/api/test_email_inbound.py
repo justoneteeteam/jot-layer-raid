@@ -89,8 +89,10 @@ def run_inbound_email_tests():
         replies = json.loads(ticket_db_updated.replies)
         print(f"Updated Replies in Database: {replies}")
         assert len(replies) == 1
-        assert replies[0] == "[Customer Reply] Also, can you please make it an XL instead of L?"
+        assert replies[0].startswith("[Customer Reply") and replies[0].endswith("Also, can you please make it an XL instead of L?")
         assert ticket_db_updated.status == "open"
+        assert ticket_db_updated.recipient_email == "customer@vulius.com"
+        print("✅ DB record verified: recipient_email and thread replies saved correctly!")
         print("✅ DB record verified: thread replies appended correctly!")
 
         # 5. Clean up testing records

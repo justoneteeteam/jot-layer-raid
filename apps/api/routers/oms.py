@@ -101,7 +101,7 @@ def format_template(template_str, customer_name, order_id, shipping_status, trac
             .replace("{shipping_status}", (shipping_status or "").upper())
             .replace("{tracking_number}", tracking_number or ""))
 
-def actual_send_email(to_email: str, subject: str, body_text: str, custom_html: str = None):
+def actual_send_email(to_email: str, subject: str, body_text: str, custom_html: str = None, from_email: str = None):
     """Send a real email routing dynamically through JOT's pluggable EmailProvider layer."""
     from services.email_engine import get_email_provider
     from models.email_sender_identity import EmailSenderIdentity
@@ -110,8 +110,11 @@ def actual_send_email(to_email: str, subject: str, body_text: str, custom_html: 
     db = SessionLocal()
     sender_config = None
     try:
-        # Load first active Sender Identity
-        sender_config = db.query(EmailSenderIdentity).filter(EmailSenderIdentity.status == "active").first()
+        # Load first active Sender Identity matching from_email if specified, else first active
+        if from_email:
+            sender_config = db.query(EmailSenderIdentity).filter(EmailSenderIdentity.from_email == from_email).first()
+        if not sender_config:
+            sender_config = db.query(EmailSenderIdentity).filter(EmailSenderIdentity.status == "active").first()
     except Exception as e:
         logger.error(f"Error querying EmailSenderIdentity: {e}")
     finally:
@@ -1368,15 +1371,21 @@ def reply_to_ticket(ticket_id: int, reply: dict, db: Session = Depends(get_db)):
             pass
             
     reply_msg = reply.get("message", "")
+    from_email = reply.get("from_email")
+    
     if reply_msg.strip():
         now_time = datetime.now().strftime("%H:%M %d/%m")
-        formatted_reply = f"[Support Agent | {now_time}] {reply_msg}"
+        if from_email:
+            formatted_reply = f"[Support Agent | {now_time} via {from_email}] {reply_msg}"
+        else:
+            formatted_reply = f"[Support Agent | {now_time}] {reply_msg}"
+            
         replies_list.append(formatted_reply)
         ticket.replies = json.dumps(replies_list)
         
-        # Deliver live email via Cloudflare REST API
+        # Deliver live email via selected identity
         subject_line = f"Re: {ticket.subject}" if ticket.subject else "Update regarding your JOT Support ticket"
-        actual_send_email(ticket.customer_email, subject_line, reply_msg)
+        actual_send_email(ticket.customer_email, subject_line, reply_msg, from_email=from_email)
         
     orders = db.query(Order).filter(Order.customer_email == ticket.customer_email).all()
     for order in orders:
@@ -1433,6 +1442,8 @@ def inbound_support_email_webhook(
         replies_list.append(continuation_msg)
         existing_ticket.replies = json.dumps(replies_list)
         existing_ticket.status = "open"
+        if not existing_ticket.recipient_email and recipient:
+            existing_ticket.recipient_email = recipient
         db.commit()
         logger.info(f"Appended customer inbound email to existing support ticket ID {existing_ticket.id}.")
         
@@ -1471,7 +1482,8 @@ def inbound_support_email_webhook(
             subject=subject,
             message=body_text,
             status="open",
-            replies="[]"
+            replies="[]",
+            recipient_email=recipient
         )
         db.add(new_ticket)
         db.commit()

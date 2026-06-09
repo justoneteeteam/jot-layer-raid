@@ -61,6 +61,13 @@ def _run_migrations():
                 conn.execute(text("ALTER TABLE orders ADD COLUMN tracking_email_sent BOOLEAN DEFAULT FALSE"))
                 logger.info("Added orders.tracking_email_sent")
 
+        # ── tickets table: add recipient_email ──
+        if "tickets" in table_names:
+            existing = {c["name"] for c in inspector.get_columns("tickets")}
+            if "recipient_email" not in existing:
+                conn.execute(text("ALTER TABLE tickets ADD COLUMN recipient_email VARCHAR"))
+                logger.info("Added tickets.recipient_email")
+
         # ── Cleanup mock tickets & mock orders ──
         if "tickets" in table_names:
             conn.execute(text("DELETE FROM tickets WHERE customer_email LIKE '%@example.com' OR customer_email = 'shelltalbot@gmail.com'"))
