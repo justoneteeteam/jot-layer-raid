@@ -48,15 +48,37 @@ export interface Template {
   background_color?: string;
 }
 
+function getHeaders(customHeaders: HeadersInit = {}): HeadersInit {
+  const headers: Record<string, string> = {};
+  if (typeof window !== "undefined") {
+    const token = localStorage.getItem("token");
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+  }
+  return {
+    ...headers,
+    ...(customHeaders as Record<string, string>),
+  };
+}
+
+async function apiFetch(path: string, options: RequestInit = {}) {
+  const headers = getHeaders(options.headers);
+  return fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers,
+  });
+}
+
 export async function fetchTeams(): Promise<Team[]> {
-  const res = await fetch(`${API_BASE}/api/database/teams`);
+  const res = await apiFetch("/api/database/teams");
   if (!res.ok) throw new Error("Failed to fetch teams");
   const data = await res.json();
   return data.sort((a: Team, b: Team) => a.name.localeCompare(b.name));
 }
 
 export async function fetchPlayers(teamId: number): Promise<Player[]> {
-  const res = await fetch(`${API_BASE}/api/database/teams/${teamId}/players`);
+  const res = await apiFetch(`/api/database/teams/${teamId}/players`);
   if (!res.ok) throw new Error("Failed to fetch players");
   return res.json();
 }
@@ -65,31 +87,31 @@ export async function fetchFonts(teamId?: number, jerseyType?: string): Promise<
   const params = new URLSearchParams();
   if (teamId) params.append("team_id", teamId.toString());
   if (jerseyType && jerseyType !== "All") params.append("jersey_type", jerseyType);
-  const res = await fetch(`${API_BASE}/api/fonts?${params.toString()}`);
+  const res = await apiFetch(`/api/fonts?${params.toString()}`);
   if (!res.ok) throw new Error("Failed to fetch fonts");
   return res.json();
 }
 
 export async function fetchPatches(): Promise<Patch[]> {
-  const res = await fetch(`${API_BASE}/api/patches`);
+  const res = await apiFetch("/api/patches");
   if (!res.ok) throw new Error("Failed to fetch patches");
   return res.json();
 }
 
 export async function fetchTemplates(): Promise<Template[]> {
-  const res = await fetch(`${API_BASE}/api/mockups/templates`);
+  const res = await apiFetch("/api/mockups/templates");
   if (!res.ok) throw new Error("Failed to fetch templates");
   return res.json();
 }
 
 export async function fetchTemplate(id: number | string): Promise<Template> {
-  const res = await fetch(`${API_BASE}/api/mockups/templates/${id}`);
+  const res = await apiFetch(`/api/mockups/templates/${id}`);
   if (!res.ok) throw new Error("Failed to fetch template");
   return res.json();
 }
 
 export async function saveTemplate(id: number | string, data: Partial<Template>): Promise<Template> {
-  const res = await fetch(`${API_BASE}/api/mockups/templates/${id}`, {
+  const res = await apiFetch(`/api/mockups/templates/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
@@ -101,7 +123,7 @@ export async function saveTemplate(id: number | string, data: Partial<Template>)
 export async function uploadBackground(id: number | string, file: File): Promise<{ image_url: string }> {
   const formData = new FormData();
   formData.append("file", file);
-  const res = await fetch(`${API_BASE}/api/mockups/templates/${id}/background`, {
+  const res = await apiFetch(`/api/mockups/templates/${id}/background`, {
     method: "POST",
     body: formData,
   });
@@ -118,7 +140,7 @@ export interface Store {
 }
 
 export async function fetchStores(): Promise<Store[]> {
-  const res = await fetch(`${API_BASE}/api/stores`);
+  const res = await apiFetch("/api/stores");
   if (!res.ok) throw new Error("Failed to fetch stores");
   return res.json();
 }

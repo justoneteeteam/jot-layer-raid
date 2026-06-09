@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useAuth } from "../components/AuthProvider";
 
 const navItems = [
   { label: "Dashboard", icon: "📊", href: "/" },
@@ -34,6 +35,28 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const { user, token, loading, logout } = useAuth();
+
+  if (loading || !token) {
+    return (
+      <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center", background: "var(--bg-secondary)" }}>
+        <style dangerouslySetInnerHTML={{__html: `
+          @keyframes spin {
+            to { transform: rotate(360deg); }
+          }
+          .spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid var(--border-default);
+            border-radius: 50%;
+            border-top-color: var(--accent);
+            animation: spin 0.8s linear infinite;
+          }
+        `}} />
+        <div className="spinner"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="app-layout">
@@ -82,8 +105,8 @@ export default function DashboardLayout({
             )?.label || "JOTLayerRaid"}
           </div>
           <div className="topbar-actions">
-            <button className="btn btn-ghost">admin</button>
-            <button className="btn btn-secondary">Logout</button>
+            <button className="btn btn-ghost" style={{ cursor: "default" }}>{user || "admin"}</button>
+            <button className="btn btn-secondary" onClick={logout}>Logout</button>
           </div>
         </header>
         <main className="main-content">{children}</main>

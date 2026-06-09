@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": ".venv\\Scripts\\python -m uvicorn main:app --port 8000 --reload",
-    "start": ".venv\\Scripts\\python -m uvicorn main:app --port 8000"
+    "dev": ".venv/bin/python -m uvicorn main:app --port 8000 --reload",
+    "start": ".venv/bin/python -m uvicorn main:app --port 8000"
   }
 }
