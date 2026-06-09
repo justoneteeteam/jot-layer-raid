@@ -108,29 +108,3 @@ app.include_router(marketing_router.router)
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "service": "JOTLayerRaid API"}
-
-
-@app.get("/api/temp-seed-user")
-def temp_seed_user():
-    from database import SessionLocal
-    from models.user import User
-    from services.auth import hash_password
-    import logging
-
-    logger = logging.getLogger(__name__)
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.username == 'contact@wairaiders.com').first()
-        if user:
-            return {"status": "already_exists", "message": "User contact@wairaiders.com already exists in production database!"}
-        
-        new_user = User(username='contact@wairaiders.com', hashed_password=hash_password('260194'))
-        db.add(new_user)
-        db.commit()
-        logger.info("Successfully seeded contact@wairaiders.com in production database!")
-        return {"status": "success", "message": "User contact@wairaiders.com successfully created in production database!"}
-    except Exception as e:
-        logger.error(f"Error seeding user: {e}")
-        return {"status": "error", "message": str(e)}
-    finally:
-        db.close()
