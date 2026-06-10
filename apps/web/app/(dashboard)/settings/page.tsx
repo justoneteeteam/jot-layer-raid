@@ -12,6 +12,7 @@ interface StoreEntry {
   url: string;
   apiKey: string;
   apiSecret: string;
+  hasCredentials: boolean;
   status: "active" | "inactive" | "testing";
   products: number;
   lastSync: string;
@@ -29,12 +30,7 @@ interface SenderIdentity {
   provider_config_ref?: string;
 }
 
-const INITIAL_STORES: StoreEntry[] = [
-  { id: 1, name: "WaiRaiders Store", platform: "WooCommerce", url: "https://wairaiders.com", apiKey: "ck_••••••", apiSecret: "cs_••••••", status: "active", products: 128, lastSync: "2026-05-10 09:30" },
-  { id: 2, name: "Eagles Gear Shop", platform: "WooCommerce", url: "https://eaglesgear.shop", apiKey: "ck_••••••", apiSecret: "cs_••••••", status: "active", products: 84, lastSync: "2026-05-09 15:00" },
-  { id: 3, name: "JerseyHub SB", platform: "ShopBase", url: "https://jerseyhub.onshopbase.com", apiKey: "••••••", apiSecret: "••••••", status: "inactive", products: 0, lastSync: "Never" },
-  { id: 4, name: "Vulius Astro Store", platform: "Astro", url: "https://vulius.com", apiKey: "••••••", apiSecret: "••••••", status: "active", products: 142, lastSync: "2026-06-10 11:00" },
-];
+const INITIAL_STORES: StoreEntry[] = [];
 
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<"stores" | "crm" | "senders">("stores");
@@ -149,8 +145,11 @@ export default function SettingsPage() {
         name: s.name,
         platform: (s.platform === "woocommerce" ? "WooCommerce" : s.platform === "shopbase" ? "ShopBase" : "Astro") as any,
         url: s.url,
-        apiKey: s.apiKey || "••••••",
-        apiSecret: s.apiSecret || "••••••",
+        // Store masked display values (from backend) for display in table only
+        apiKey: s.apiKey || "",
+        apiSecret: s.apiSecret || "",
+        // Track whether credentials actually exist in the database
+        hasCredentials: !!(s.apiKey && s.apiKey.length > 0),
         status: (s.is_active ? "active" : "inactive") as any,
         products: s.platform === "woocommerce" ? 128 : s.platform === "shopbase" ? 84 : 142,
         lastSync: s.last_synced_at ? new Date(s.last_synced_at).toLocaleString() : "Never"
@@ -206,17 +205,21 @@ export default function SettingsPage() {
 
   const openEditStore = (store: StoreEntry) => {
     setEditStoreId(store.id);
-    setStoreForm({ name: store.name, platform: store.platform, url: store.url, apiKey: store.apiKey || "", apiSecret: store.apiSecret || "" });
+    // IMPORTANT: Always open with EMPTY credential fields so user can type freely.
+    // The backend never returns raw keys (security). If user leaves these blank on save,
+    // the existing database credentials are preserved untouched.
+    setStoreForm({ name: store.name, platform: store.platform, url: store.url, apiKey: "", apiSecret: "" });
     setTestStatus("idle"); setTestMessage("");
     setStoreModalOpen(true);
   };
 
   const testStoreConnection = async () => {
     setTestStatus("testing"); setTestMessage("");
-    const isApiKeyPlaceholder = storeForm.apiKey.includes("•");
-    const isApiSecretPlaceholder = storeForm.apiSecret.includes("•");
+    const trimmedKey = storeForm.apiKey.trim();
+    const trimmedSecret = storeForm.apiSecret.trim();
 
-    if (editStoreId && isApiKeyPlaceholder && isApiSecretPlaceholder) {
+    // If editing and user left credential fields empty → test using saved DB credentials
+    if (editStoreId && trimmedKey === "" && trimmedSecret === "") {
       try {
         const res = await testStoreConnectionApi(editStoreId);
         setTestStatus("success");
@@ -225,25 +228,24 @@ export default function SettingsPage() {
         setTestStatus("error");
         setTestMessage("Connection test failed. Please verify your credentials.");
       }
-    } else {
-      if (storeForm.url && storeForm.apiKey && storeForm.apiSecret && !isApiKeyPlaceholder && !isApiSecretPlaceholder) {
-        try {
-          const res = await testStoreCredentials({
-            platform: storeForm.platform,
-            url: storeForm.url,
-            api_key: storeForm.apiKey,
-            api_secret: storeForm.apiSecret
-          });
-          setTestStatus("success");
-          setTestMessage(res.message);
-        } catch (err) {
-          setTestStatus("error");
-          setTestMessage("Connection test failed. Please verify your credentials.");
-        }
-      } else {
+    } else if (storeForm.url && trimmedKey.length > 0 && trimmedSecret.length > 0) {
+      // User typed new credentials → test those
+      try {
+        const res = await testStoreCredentials({
+          platform: storeForm.platform,
+          url: storeForm.url,
+          api_key: trimmedKey,
+          api_secret: trimmedSecret
+        });
+        setTestStatus("success");
+        setTestMessage(res.message);
+      } catch (err) {
         setTestStatus("error");
-        setTestMessage("Please enter valid API Key and API Secret (non-placeholder) to test connection.");
+        setTestMessage("Connection test failed. Please verify your credentials.");
       }
+    } else {
+      setTestStatus("error");
+      setTestMessage("Please enter both API Key and API Secret to test connection.");
     }
   };
 
@@ -255,22 +257,30 @@ export default function SettingsPage() {
           name: storeForm.name,
           url: storeForm.url
         };
-        if (storeForm.apiKey && !storeForm.apiKey.includes("•")) {
-          payload.api_key = storeForm.apiKey;
+        // Only send credentials if user actually typed something new.
+        // Empty fields = keep existing DB credentials untouched.
+        const trimmedKey = storeForm.apiKey.trim();
+        const trimmedSecret = storeForm.apiSecret.trim();
+        if (trimmedKey.length > 0) {
+          payload.api_key = trimmedKey;
         }
-        if (storeForm.apiSecret && !storeForm.apiSecret.includes("•")) {
-          payload.api_secret = storeForm.apiSecret;
+        if (trimmedSecret.length > 0) {
+          payload.api_secret = trimmedSecret;
         }
         
         await updateStore(editStoreId, payload);
         showStatus("✔️ Store connection successfully updated!", "success");
       } else {
+        if (!storeForm.apiKey.trim() || !storeForm.apiSecret.trim()) {
+          showStatus("❌ API Key and API Secret are required for new stores.", "error");
+          return;
+        }
         await createStore({
           name: storeForm.name,
           platform: storeForm.platform.toLowerCase(),
           url: storeForm.url,
-          api_key: storeForm.apiKey,
-          api_secret: storeForm.apiSecret
+          api_key: storeForm.apiKey.trim(),
+          api_secret: storeForm.apiSecret.trim()
         });
         showStatus("✔️ Store connection successfully created!", "success");
       }
@@ -1042,12 +1052,38 @@ export default function SettingsPage() {
                 <input className="input" placeholder={storeForm.platform === "WooCommerce" ? "https://mystore.com" : storeForm.platform === "ShopBase" ? "https://mystore.onshopbase.com" : "https://mystore.com"} value={storeForm.url} onChange={(e) => setStoreForm({ ...storeForm, url: e.target.value })} />
               </div>
               <div className="form-group">
-                <label className="form-label">{storeForm.platform === "WooCommerce" ? "Consumer Key" : storeForm.platform === "ShopBase" ? "API Key" : "Astro API Key"}</label>
-                <input className="input" type="password" placeholder={storeForm.platform === "WooCommerce" ? "ck_xxxxxxxxxxxxxxxx" : storeForm.platform === "ShopBase" ? "API key" : "astro_xxxxxxxxxxxxxxxx"} value={storeForm.apiKey} onChange={(e) => setStoreForm({ ...storeForm, apiKey: e.target.value })} />
+                <label className="form-label" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span>{storeForm.platform === "WooCommerce" ? "Consumer Key" : storeForm.platform === "ShopBase" ? "API Key" : "Astro API Key"}</span>
+                  {editStoreId && stores.find(s => s.id === editStoreId)?.hasCredentials && (
+                    <span style={{ fontSize: 11, background: "#d1fae5", color: "#065f46", borderRadius: 4, padding: "2px 7px", fontWeight: 600 }}>🔑 Saved — leave blank to keep</span>
+                  )}
+                </label>
+                <input
+                  className="input"
+                  type="password"
+                  placeholder={editStoreId && stores.find(s => s.id === editStoreId)?.hasCredentials
+                    ? "Leave blank to keep existing key"
+                    : storeForm.platform === "WooCommerce" ? "ck_xxxxxxxxxxxxxxxx" : storeForm.platform === "ShopBase" ? "API key" : "astro_xxxxxxxxxxxxxxxx"}
+                  value={storeForm.apiKey}
+                  onChange={(e) => setStoreForm({ ...storeForm, apiKey: e.target.value })}
+                />
               </div>
               <div className="form-group">
-                <label className="form-label">{storeForm.platform === "WooCommerce" ? "Consumer Secret" : storeForm.platform === "ShopBase" ? "API Secret" : "Astro API Secret"}</label>
-                <input className="input" type="password" placeholder={storeForm.platform === "WooCommerce" ? "cs_xxxxxxxxxxxxxxxx" : storeForm.platform === "ShopBase" ? "API secret" : "astro_secret_xxxxxxxxxxxxxxxx"} value={storeForm.apiSecret} onChange={(e) => setStoreForm({ ...storeForm, apiSecret: e.target.value })} />
+                <label className="form-label" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span>{storeForm.platform === "WooCommerce" ? "Consumer Secret" : storeForm.platform === "ShopBase" ? "API Secret" : "Astro API Secret"}</span>
+                  {editStoreId && stores.find(s => s.id === editStoreId)?.hasCredentials && (
+                    <span style={{ fontSize: 11, background: "#d1fae5", color: "#065f46", borderRadius: 4, padding: "2px 7px", fontWeight: 600 }}>🔒 Saved — leave blank to keep</span>
+                  )}
+                </label>
+                <input
+                  className="input"
+                  type="password"
+                  placeholder={editStoreId && stores.find(s => s.id === editStoreId)?.hasCredentials
+                    ? "Leave blank to keep existing secret"
+                    : storeForm.platform === "WooCommerce" ? "cs_xxxxxxxxxxxxxxxx" : storeForm.platform === "ShopBase" ? "API secret" : "astro_secret_xxxxxxxxxxxxxxxx"}
+                  value={storeForm.apiSecret}
+                  onChange={(e) => setStoreForm({ ...storeForm, apiSecret: e.target.value })}
+                />
               </div>
 
               {/* Test Connection */}
