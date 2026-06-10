@@ -35,6 +35,10 @@ COPY packages ./packages
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 
+# Cache-bust arg: pass a unique value (e.g. timestamp) to force fresh rebuild
+ARG BUILD_TIMESTAMP=unknown
+ENV BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
+
 RUN pnpm --filter web build
 
 # ── Production stage ─────────────────────────────────────────────────
