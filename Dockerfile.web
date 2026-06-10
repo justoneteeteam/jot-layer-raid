@@ -26,6 +26,10 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/apps/web/node_modules ./apps/web/node_modules
 COPY --from=deps /app/packages ./packages
 
+# Cache-bust arg MUST come before COPY to invalidate Docker layer cache
+ARG BUILD_TIMESTAMP=unknown
+ENV BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
+
 # Copy all source
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json .npmrc* ./
 COPY apps/web ./apps/web
@@ -34,10 +38,6 @@ COPY packages ./packages
 # Build argument for API URL (set at build time on Railway)
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-
-# Cache-bust arg: pass a unique value (e.g. timestamp) to force fresh rebuild
-ARG BUILD_TIMESTAMP=unknown
-ENV BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
 
 RUN pnpm --filter web build
 
