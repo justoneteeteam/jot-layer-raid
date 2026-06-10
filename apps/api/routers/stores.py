@@ -56,6 +56,8 @@ def list_stores(db: Session = Depends(get_db)):
             "platform": s.platform,
             "url": s.url,
             "is_active": s.is_active,
+            "apiKey": f"{s.api_key[:3]}••••••" if s.api_key else "••••••",
+            "apiSecret": "••••••" if s.api_secret else "••••••",
             "last_synced_at": s.last_synced_at.isoformat() if s.last_synced_at else None,
             "created_at": s.created_at.isoformat() if s.created_at else None,
         }

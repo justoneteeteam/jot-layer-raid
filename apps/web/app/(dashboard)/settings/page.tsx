@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { fetchStores, createStore, updateStore, deleteStore, testStoreCredentials } from "../../lib/api";
+import { fetchStores, createStore, updateStore, deleteStore, testStoreCredentials, testStoreConnection as testStoreConnectionApi } from "../../lib/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -149,8 +149,8 @@ export default function SettingsPage() {
         name: s.name,
         platform: (s.platform === "woocommerce" ? "WooCommerce" : s.platform === "shopbase" ? "ShopBase" : "Astro") as any,
         url: s.url,
-        apiKey: "••••••",
-        apiSecret: "••••••",
+        apiKey: s.apiKey || "••••••",
+        apiSecret: s.apiSecret || "••••••",
         status: (s.is_active ? "active" : "inactive") as any,
         products: s.platform === "woocommerce" ? 128 : s.platform === "shopbase" ? 84 : 142,
         lastSync: s.last_synced_at ? new Date(s.last_synced_at).toLocaleString() : "Never"
@@ -206,21 +206,19 @@ export default function SettingsPage() {
 
   const openEditStore = (store: StoreEntry) => {
     setEditStoreId(store.id);
-    setStoreForm({ name: store.name, platform: store.platform, url: store.url, apiKey: "", apiSecret: "" });
+    setStoreForm({ name: store.name, platform: store.platform, url: store.url, apiKey: store.apiKey || "", apiSecret: store.apiSecret || "" });
     setTestStatus("idle"); setTestMessage("");
     setStoreModalOpen(true);
   };
 
   const testStoreConnection = async () => {
     setTestStatus("testing"); setTestMessage("");
-    if (storeForm.url && storeForm.apiKey && storeForm.apiSecret) {
+    const isApiKeyPlaceholder = storeForm.apiKey.includes("•");
+    const isApiSecretPlaceholder = storeForm.apiSecret.includes("•");
+
+    if (editStoreId && isApiKeyPlaceholder && isApiSecretPlaceholder) {
       try {
-        const res = await testStoreCredentials({
-          platform: storeForm.platform,
-          url: storeForm.url,
-          api_key: storeForm.apiKey,
-          api_secret: storeForm.apiSecret
-        });
+        const res = await testStoreConnectionApi(editStoreId);
         setTestStatus("success");
         setTestMessage(res.message);
       } catch (err) {
@@ -228,8 +226,24 @@ export default function SettingsPage() {
         setTestMessage("Connection test failed. Please verify your credentials.");
       }
     } else {
-      setTestStatus("error");
-      setTestMessage("Please fill in all fields before testing.");
+      if (storeForm.url && storeForm.apiKey && storeForm.apiSecret && !isApiKeyPlaceholder && !isApiSecretPlaceholder) {
+        try {
+          const res = await testStoreCredentials({
+            platform: storeForm.platform,
+            url: storeForm.url,
+            api_key: storeForm.apiKey,
+            api_secret: storeForm.apiSecret
+          });
+          setTestStatus("success");
+          setTestMessage(res.message);
+        } catch (err) {
+          setTestStatus("error");
+          setTestMessage("Connection test failed. Please verify your credentials.");
+        }
+      } else {
+        setTestStatus("error");
+        setTestMessage("Please enter valid API Key and API Secret (non-placeholder) to test connection.");
+      }
     }
   };
 
@@ -241,8 +255,12 @@ export default function SettingsPage() {
           name: storeForm.name,
           url: storeForm.url
         };
-        if (storeForm.apiKey) payload.api_key = storeForm.apiKey;
-        if (storeForm.apiSecret) payload.api_secret = storeForm.apiSecret;
+        if (storeForm.apiKey && !storeForm.apiKey.includes("•")) {
+          payload.api_key = storeForm.apiKey;
+        }
+        if (storeForm.apiSecret && !storeForm.apiSecret.includes("•")) {
+          payload.api_secret = storeForm.apiSecret;
+        }
         
         await updateStore(editStoreId, payload);
         showStatus("✔️ Store connection successfully updated!", "success");
