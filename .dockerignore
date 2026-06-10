@@ -1,0 +1,8 @@
+# Exclude build artifacts - prevents stale pre-built output from being baked into the Docker image
+apps/web/.next
+apps/web/.turbo
+node_modules
+apps/web/node_modules
+apps/api/.venv
+.git
+*.log
