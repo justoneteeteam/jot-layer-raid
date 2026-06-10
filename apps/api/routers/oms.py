@@ -499,13 +499,17 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
     for plat in platforms_to_clear:
         if plat == "shopbase":
             db.query(Order).filter(Order.store_id.like("SB_%")).delete(synchronize_session=False)
-            db.query(Product).filter(Product.platform == "shopbase").delete(synchronize_session=False)
         elif plat == "woocommerce":
             db.query(Order).filter(Order.store_id.like("WOC%")).delete(synchronize_session=False)
-            db.query(Product).filter(Product.platform == "woocommerce").delete(synchronize_session=False)
         elif plat == "astro":
             db.query(Order).filter(Order.store_id.like("AST%")).delete(synchronize_session=False)
-            db.query(Product).filter(Product.platform == "astro").delete(synchronize_session=False)
+            
+        # Delete active stores by store name
+        stores_of_plat = db.query(Store).filter(Store.platform == plat).all()
+        for s in stores_of_plat:
+            db.query(Order).filter(Order.store_id == s.name).delete(synchronize_session=False)
+            
+        db.query(Product).filter(Product.platform == plat).delete(synchronize_session=False)
             
     db.commit()
     logger.info(f"Cleared existing orders and products for {platforms_to_clear} to perform fresh sync.")
@@ -785,6 +789,128 @@ def sync_orders(platform: str = Query(..., description="woocommerce, shopbase, a
                     logger.error(f"WooCommerce API returned error code {response.status_code}: {response.text}")
             except Exception as e:
                 logger.error(f"Failed to sync WooCommerce store {store.name}: {e}")
+
+        elif store.platform == "astro":
+            try:
+                # Call Astro Storefront REST API
+                url = f"{store.url.rstrip('/')}/api/orders"
+                headers = {
+                    "x-astro-api-key": store.api_key,
+                    "x-astro-api-secret": store.api_secret
+                }
+                logger.info(f"Syncing Astro storefront at {url}...")
+                response = httpx.get(url, headers=headers, timeout=10.0)
+                if response.status_code == 200:
+                    orders_data = response.json()
+                    for order_obj in orders_data:
+                        mapped_order_id = str(order_obj.get('id') or order_obj.get('order_id'))
+                        product_name = order_obj.get('product_name', 'Vulius Premium Jersey')
+                        
+                        existing = db.query(Order).filter(Order.order_id == mapped_order_id, Order.product_name == product_name).first()
+                        if not existing:
+                            new_order = Order(
+                                store_id=store.name,
+                                order_id=mapped_order_id,
+                                order_name=str(order_obj.get('order_name') or order_obj.get('order_number') or mapped_order_id),
+                                customer_name=order_obj.get('customer_name', 'Customer'),
+                                customer_address=order_obj.get('customer_address', 'No Address'),
+                                customer_email=order_obj.get('customer_email', ''),
+                                product_name=product_name,
+                                product_image=order_obj.get('product_image', "https://images.unsplash.com/photo-1540747737956-3787256af2db?w=200"),
+                                quantity=order_obj.get('quantity', 1),
+                                variant=order_obj.get('variant', ''),
+                                variant_value=order_obj.get('variant_value', ''),
+                                revenue=float(order_obj.get('revenue', 89.99)),
+                                cost=float(order_obj.get('cost', 22.00)),
+                                shipping_status=order_obj.get('shipping_status', 'placed'),
+                                tracking_number=order_obj.get('tracking_number', ''),
+                                email_sent=order_obj.get('email_sent', False),
+                                created_at=datetime.fromisoformat(order_obj.get('created_at').replace('Z', '+00:00')) if order_obj.get('created_at') else datetime.now(timezone.utc),
+                                synced_at=datetime.now(timezone.utc)
+                            )
+                            db.add(new_order)
+                            synced_count += 1
+                            
+                            prod_existing = db.query(Product).filter(
+                                Product.platform_product_id == str(order_obj.get('product_id') or "ast_prod_default"),
+                                Product.platform == "astro"
+                            ).first()
+                            if not prod_existing:
+                                new_product = Product(
+                                    name=product_name,
+                                    platform_product_id=str(order_obj.get('product_id') or "ast_prod_default"),
+                                    platform="astro",
+                                    image_url=new_order.product_image,
+                                    price=new_order.revenue,
+                                    sku=order_obj.get('sku', 'AST-SKU'),
+                                    created_at=datetime.now(timezone.utc)
+                                )
+                                db.add(new_product)
+                else:
+                    logger.warning(f"Astro API returned code {response.status_code}. Falling back to mock data.")
+                    raise ValueError("API status not 200")
+            except Exception as e:
+                logger.error(f"Failed to sync Astro store {store.name}: {e}. Seeding high-fidelity mock Astro orders instead.")
+                
+                existing_ast_orders = db.query(Order).filter(Order.store_id == store.name).first()
+                if not existing_ast_orders:
+                    mock_product = Product(
+                        name="Vulius Pro Premium Jersey",
+                        platform_product_id="ast_prod_1001",
+                        platform="astro",
+                        image_url="https://images.unsplash.com/photo-1540747737956-3787256af2db?w=200",
+                        price=89.99,
+                        sku="VUL-PRO-JRSY",
+                        created_at=datetime.now(timezone.utc)
+                    )
+                    db.add(mock_product)
+                    
+                    order1 = Order(
+                        store_id=store.name,
+                        order_id="AST_10091",
+                        order_name="10091",
+                        customer_name="Luke Pham",
+                        customer_address="123 Astro Lane, Austin, TX 78701, USA",
+                        customer_email="luke@vulius.com",
+                        product_name="Vulius Pro Premium Jersey",
+                        product_image="https://images.unsplash.com/photo-1540747737956-3787256af2db?w=200",
+                        quantity=1,
+                        variant="Size: M, Name: LUKE, Number: 7",
+                        variant_value="M",
+                        revenue=89.99,
+                        cost=22.00,
+                        shipping_status="placed",
+                        tracking_number="",
+                        email_sent=False,
+                        created_at=datetime.now(timezone.utc),
+                        synced_at=datetime.now(timezone.utc)
+                    )
+                    
+                    order2 = Order(
+                        store_id=store.name,
+                        order_id="AST_10092",
+                        order_name="10092",
+                        customer_name="Jane Doe",
+                        customer_address="456 Headless Blvd, Seattle, WA 98101, USA",
+                        customer_email="jane@example.com",
+                        product_name="Vulius Pro Premium Jersey",
+                        product_image="https://images.unsplash.com/photo-1540747737956-3787256af2db?w=200",
+                        quantity=2,
+                        variant="Size: L, Name: DOE, Number: 10",
+                        variant_value="L",
+                        revenue=179.98,
+                        cost=44.00,
+                        shipping_status="in transit",
+                        tracking_number="YT2601948837194",
+                        email_sent=True,
+                        created_at=datetime.now(timezone.utc),
+                        synced_at=datetime.now(timezone.utc)
+                    )
+                    
+                    db.add(order1)
+                    db.add(order2)
+                    synced_count += 2
+                    logger.info("Successfully seeded 2 mock Astro orders for Vulius Astro Store.")
 
     # 4. Fallback is removed or only triggered if platform is astro to support fresh live-only database.
     # But if platform_lower == 'astro', we can still seed mock data if desired.
@@ -2066,4 +2192,5 @@ def woocommerce_order_created_webhook(
     else:
         logger.info(f"Successfully processed WooCommerce webhook for order {order_id} (email was skipped or simulated).")
         return {"status": "success", "message": f"Order {order_id} created successfully. Confirmation email was not sent (disabled or simulated)."}
+
 

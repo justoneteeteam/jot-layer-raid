@@ -137,10 +137,58 @@ export interface Store {
   platform: string;
   url: string;
   is_active: boolean;
+  apiKey?: string;
+  apiSecret?: string;
 }
 
 export async function fetchStores(): Promise<Store[]> {
   const res = await apiFetch("/api/stores");
   if (!res.ok) throw new Error("Failed to fetch stores");
+  return res.json();
+}
+
+export async function createStore(data: { name: string; platform: string; url: string; api_key: string; api_secret: string }): Promise<Store> {
+  const res = await apiFetch("/api/stores", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Failed to create store");
+  return res.json();
+}
+
+export async function updateStore(id: number, data: { name?: string; url?: string; api_key?: string; api_secret?: string }): Promise<{ updated: number }> {
+  const res = await apiFetch(`/api/stores/${id}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Failed to update store");
+  return res.json();
+}
+
+export async function deleteStore(id: number): Promise<{ deleted: number }> {
+  const res = await apiFetch(`/api/stores/${id}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error("Failed to delete store");
+  return res.json();
+}
+
+export async function testStoreConnection(id: number): Promise<{ status: string; platform: string; message: string }> {
+  const res = await apiFetch(`/api/stores/${id}/test`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error("Failed to test store connection");
+  return res.json();
+}
+
+export async function testStoreCredentials(data: { platform: string; url: string; api_key: string; api_secret: string }): Promise<{ status: string; platform: string; message: string }> {
+  const res = await apiFetch("/api/stores/test-credentials", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error("Failed to test store credentials");
   return res.json();
 }

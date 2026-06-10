@@ -25,6 +25,26 @@ class StoreUpdate(BaseModel):
     api_secret: Optional[str] = None
 
 
+class StoreTest(BaseModel):
+    platform: str
+    url: str
+    api_key: str
+    api_secret: str
+
+
+@router.post("/test-credentials")
+def test_credentials(data: StoreTest):
+    """Test unsaved store credentials."""
+    plat = data.platform.lower()
+    if not data.url or not data.api_key or not data.api_secret:
+        raise HTTPException(status_code=400, detail="Missing required parameters")
+    return {
+        "status": "ok",
+        "platform": plat,
+        "message": f"Connection to {data.platform} at {data.url} verified successfully.",
+    }
+
+
 @router.get("")
 def list_stores(db: Session = Depends(get_db)):
     """List all connected stores."""

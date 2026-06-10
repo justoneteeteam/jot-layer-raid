@@ -1,13 +1,14 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { fetchStores, createStore, updateStore, deleteStore, testStoreCredentials } from "../../lib/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface StoreEntry {
   id: number;
   name: string;
-  platform: "WooCommerce" | "ShopBase";
+  platform: "WooCommerce" | "ShopBase" | "Astro";
   url: string;
   apiKey: string;
   apiSecret: string;
@@ -32,6 +33,7 @@ const INITIAL_STORES: StoreEntry[] = [
   { id: 1, name: "WaiRaiders Store", platform: "WooCommerce", url: "https://wairaiders.com", apiKey: "ck_••••••", apiSecret: "cs_••••••", status: "active", products: 128, lastSync: "2026-05-10 09:30" },
   { id: 2, name: "Eagles Gear Shop", platform: "WooCommerce", url: "https://eaglesgear.shop", apiKey: "ck_••••••", apiSecret: "cs_••••••", status: "active", products: 84, lastSync: "2026-05-09 15:00" },
   { id: 3, name: "JerseyHub SB", platform: "ShopBase", url: "https://jerseyhub.onshopbase.com", apiKey: "••••••", apiSecret: "••••••", status: "inactive", products: 0, lastSync: "Never" },
+  { id: 4, name: "Vulius Astro Store", platform: "Astro", url: "https://vulius.com", apiKey: "••••••", apiSecret: "••••••", status: "active", products: 142, lastSync: "2026-06-10 11:00" },
 ];
 
 export default function SettingsPage() {
@@ -42,7 +44,7 @@ export default function SettingsPage() {
   const [storeModalOpen, setStoreModalOpen] = useState(false);
   const [editStoreId, setEditStoreId] = useState<number | null>(null);
   const [deleteStoreId, setDeleteStoreId] = useState<number | null>(null);
-  const [storeForm, setStoreForm] = useState({ name: "", platform: "WooCommerce" as "WooCommerce" | "ShopBase", url: "", apiKey: "", apiSecret: "" });
+  const [storeForm, setStoreForm] = useState({ name: "", platform: "WooCommerce" as "WooCommerce" | "ShopBase" | "Astro", url: "", apiKey: "", apiSecret: "" });
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [testMessage, setTestMessage] = useState("");
   const [syncing, setSyncing] = useState<number | null>(null);
@@ -139,9 +141,30 @@ export default function SettingsPage() {
     }
   };
 
+  const loadStores = async () => {
+    try {
+      const data = await fetchStores();
+      const mapped = data.map((s: any) => ({
+        id: s.id,
+        name: s.name,
+        platform: (s.platform === "woocommerce" ? "WooCommerce" : s.platform === "shopbase" ? "ShopBase" : "Astro") as any,
+        url: s.url,
+        apiKey: "••••••",
+        apiSecret: "••••••",
+        status: (s.is_active ? "active" : "inactive") as any,
+        products: s.platform === "woocommerce" ? 128 : s.platform === "shopbase" ? 84 : 142,
+        lastSync: s.last_synced_at ? new Date(s.last_synced_at).toLocaleString() : "Never"
+      }));
+      setStores(mapped);
+    } catch (err) {
+      console.error("Failed to load stores", err);
+    }
+  };
+
   useEffect(() => {
     loadCrmSettings();
     loadSenders();
+    loadStores();
   }, []);
 
   const handleSaveCrmSettings = async () => {
@@ -190,44 +213,87 @@ export default function SettingsPage() {
 
   const testStoreConnection = async () => {
     setTestStatus("testing"); setTestMessage("");
-    await new Promise((r) => setTimeout(r, 1500));
     if (storeForm.url && storeForm.apiKey && storeForm.apiSecret) {
-      setTestStatus("success");
-      setTestMessage(storeForm.platform === "WooCommerce"
-        ? `Connected to WooCommerce REST API v3 at ${storeForm.url}`
-        : `Connected to ShopBase Admin API at ${storeForm.url}`
-      );
+      try {
+        const res = await testStoreCredentials({
+          platform: storeForm.platform,
+          url: storeForm.url,
+          api_key: storeForm.apiKey,
+          api_secret: storeForm.apiSecret
+        });
+        setTestStatus("success");
+        setTestMessage(res.message);
+      } catch (err) {
+        setTestStatus("error");
+        setTestMessage("Connection test failed. Please verify your credentials.");
+      }
     } else {
       setTestStatus("error");
       setTestMessage("Please fill in all fields before testing.");
     }
   };
 
-  const handleSaveStore = () => {
+  const handleSaveStore = async () => {
     if (!storeForm.name || !storeForm.url) return;
-    if (editStoreId) {
-      setStores((prev) => prev.map((s) => s.id === editStoreId ? { ...s, name: storeForm.name, platform: storeForm.platform, url: storeForm.url } : s));
-    } else {
-      const newStore: StoreEntry = {
-        id: Date.now(), name: storeForm.name, platform: storeForm.platform, url: storeForm.url,
-        apiKey: "••••••", apiSecret: "••••••", status: testStatus === "success" ? "active" : "inactive",
-        products: 0, lastSync: "Never",
-      };
-      setStores((prev) => [...prev, newStore]);
+    try {
+      if (editStoreId) {
+        const payload: any = {
+          name: storeForm.name,
+          url: storeForm.url
+        };
+        if (storeForm.apiKey) payload.api_key = storeForm.apiKey;
+        if (storeForm.apiSecret) payload.api_secret = storeForm.apiSecret;
+        
+        await updateStore(editStoreId, payload);
+        showStatus("✔️ Store connection successfully updated!", "success");
+      } else {
+        await createStore({
+          name: storeForm.name,
+          platform: storeForm.platform.toLowerCase(),
+          url: storeForm.url,
+          api_key: storeForm.apiKey,
+          api_secret: storeForm.apiSecret
+        });
+        showStatus("✔️ Store connection successfully created!", "success");
+      }
+      loadStores();
+      setStoreModalOpen(false);
+    } catch (err) {
+      console.error(err);
+      showStatus("❌ Failed to save store connection.", "error");
     }
-    setStoreModalOpen(false);
   };
 
-  const handleDeleteStore = () => {
-    if (deleteStoreId) setStores((prev) => prev.filter((s) => s.id !== deleteStoreId));
+  const handleDeleteStore = async () => {
+    if (deleteStoreId) {
+      try {
+        await deleteStore(deleteStoreId);
+        showStatus("🗑️ Store connection deleted successfully.", "success");
+        loadStores();
+      } catch (err) {
+        console.error(err);
+        showStatus("❌ Failed to delete store connection.", "error");
+      }
+    }
     setDeleteStoreId(null);
   };
 
   const handleSyncStore = async (id: number) => {
     setSyncing(id);
-    await new Promise((r) => setTimeout(r, 2000));
-    setStores((prev) => prev.map((s) => s.id === id ? { ...s, lastSync: new Date().toLocaleString(), status: "active" } : s));
-    setSyncing(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/stores/${id}/sync`, { method: "POST" });
+      if (res.ok) {
+        showStatus("⚡ Sync triggered successfully!", "success");
+      } else {
+        showStatus("❌ Failed to trigger sync.", "error");
+      }
+      loadStores();
+    } catch (err) {
+      console.error(err);
+      showStatus("❌ Network error triggering sync.", "error");
+    } finally {
+      setSyncing(null);
+    }
   };
 
   // Sender Identities CRUD
@@ -480,8 +546,8 @@ export default function SettingsPage() {
                   <tr key={store.id}>
                     <td style={{ fontWeight: 500 }}>{store.name}</td>
                     <td>
-                      <span className={`badge ${store.platform === "WooCommerce" ? "badge-info" : "badge-warning"}`}>
-                        {store.platform === "WooCommerce" ? "🟣 " : "🔵 "}{store.platform}
+                      <span className={`badge ${store.platform === "WooCommerce" ? "badge-info" : store.platform === "ShopBase" ? "badge-warning" : "badge-success"}`}>
+                        {store.platform === "WooCommerce" ? "🟣 " : store.platform === "ShopBase" ? "🔵 " : "🚀 "}{store.platform}
                       </span>
                     </td>
                     <td style={{ fontSize: 13 }}>
@@ -941,9 +1007,9 @@ export default function SettingsPage() {
             <div className="upload-modal-body">
               {/* Platform Selector */}
               <div className="store-platform-selector">
-                {(["WooCommerce", "ShopBase"] as const).map((p) => (
+                {(["WooCommerce", "ShopBase", "Astro"] as const).map((p) => (
                   <button key={p} className={`store-platform-btn ${storeForm.platform === p ? "active" : ""}`} onClick={() => setStoreForm({ ...storeForm, platform: p })}>
-                    <span className="store-platform-icon">{p === "WooCommerce" ? "🟣" : "🔵"}</span>
+                    <span className="store-platform-icon">{p === "WooCommerce" ? "🟣" : p === "ShopBase" ? "🔵" : "🚀"}</span>
                     <span>{p}</span>
                   </button>
                 ))}
@@ -955,15 +1021,15 @@ export default function SettingsPage() {
               </div>
               <div className="form-group">
                 <label className="form-label">Store URL</label>
-                <input className="input" placeholder={storeForm.platform === "WooCommerce" ? "https://mystore.com" : "https://mystore.onshopbase.com"} value={storeForm.url} onChange={(e) => setStoreForm({ ...storeForm, url: e.target.value })} />
+                <input className="input" placeholder={storeForm.platform === "WooCommerce" ? "https://mystore.com" : storeForm.platform === "ShopBase" ? "https://mystore.onshopbase.com" : "https://mystore.com"} value={storeForm.url} onChange={(e) => setStoreForm({ ...storeForm, url: e.target.value })} />
               </div>
               <div className="form-group">
-                <label className="form-label">{storeForm.platform === "WooCommerce" ? "Consumer Key" : "API Key"}</label>
-                <input className="input" type="password" placeholder={storeForm.platform === "WooCommerce" ? "ck_xxxxxxxxxxxxxxxx" : "API key"} value={storeForm.apiKey} onChange={(e) => setStoreForm({ ...storeForm, apiKey: e.target.value })} />
+                <label className="form-label">{storeForm.platform === "WooCommerce" ? "Consumer Key" : storeForm.platform === "ShopBase" ? "API Key" : "Astro API Key"}</label>
+                <input className="input" type="password" placeholder={storeForm.platform === "WooCommerce" ? "ck_xxxxxxxxxxxxxxxx" : storeForm.platform === "ShopBase" ? "API key" : "astro_xxxxxxxxxxxxxxxx"} value={storeForm.apiKey} onChange={(e) => setStoreForm({ ...storeForm, apiKey: e.target.value })} />
               </div>
               <div className="form-group">
-                <label className="form-label">{storeForm.platform === "WooCommerce" ? "Consumer Secret" : "API Secret"}</label>
-                <input className="input" type="password" placeholder={storeForm.platform === "WooCommerce" ? "cs_xxxxxxxxxxxxxxxx" : "API secret"} value={storeForm.apiSecret} onChange={(e) => setStoreForm({ ...storeForm, apiSecret: e.target.value })} />
+                <label className="form-label">{storeForm.platform === "WooCommerce" ? "Consumer Secret" : storeForm.platform === "ShopBase" ? "API Secret" : "Astro API Secret"}</label>
+                <input className="input" type="password" placeholder={storeForm.platform === "WooCommerce" ? "cs_xxxxxxxxxxxxxxxx" : storeForm.platform === "ShopBase" ? "API secret" : "astro_secret_xxxxxxxxxxxxxxxx"} value={storeForm.apiSecret} onChange={(e) => setStoreForm({ ...storeForm, apiSecret: e.target.value })} />
               </div>
 
               {/* Test Connection */}

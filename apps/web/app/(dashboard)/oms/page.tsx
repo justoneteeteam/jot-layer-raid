@@ -649,6 +649,7 @@ export default function OrdersPage() {
             <option value="">All Stores</option>
             <option value="woo">WooCommerce</option>
             <option value="sb">ShopBase</option>
+            <option value="astro">Astro</option>
           </select>
         </div>
 
