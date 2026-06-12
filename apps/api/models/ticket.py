@@ -11,7 +11,9 @@ class Ticket(Base):
     customer_email = Column(String, nullable=False, index=True)
     subject = Column(String, nullable=False)
     message = Column(Text, nullable=False)
-    status = Column(String, default="open")  # open, pending, resolved
+    status = Column(String, default="open")  # open, pending, resolved, spam, snoozed
     replies = Column(Text, default="[]")  # Serialized JSON list of replies
     recipient_email = Column(String, nullable=True, index=True)
+    tags = Column(String, default="")  # e.g., "spam", "marketing"
+    snoozed_until = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

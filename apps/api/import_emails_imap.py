@@ -14,6 +14,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 try:
     from database import SessionLocal
     from models.ticket import Ticket
+    from routers.oms import check_is_spam_marketing
 except ImportError as e:
     print(f"Error importing database session/models: {e}")
     print("Please make sure you run this script from the apps/api directory of the project.")
@@ -208,6 +209,7 @@ def main():
                             threaded_count += 1
                     else:
                         # Spawn new ticket
+                        is_spam = check_is_spam_marketing(sender_email, subject, body, db)
                         new_ticket = Ticket(
                             customer_name=sender_name,
                             customer_email=sender_email,
@@ -215,7 +217,8 @@ def main():
                             message=body,
                             status="open",
                             replies="[]",
-                            created_at=received_at
+                            created_at=received_at,
+                            tags="spam" if is_spam else ""
                         )
                         db.add(new_ticket)
                         imported_count += 1

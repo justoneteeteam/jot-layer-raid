@@ -10,9 +10,11 @@ interface Ticket {
   customer_email: string;
   subject: string;
   message: string;
-  status: string; // "open", "pending", "resolved"
+  status: string; // "open", "pending", "resolved", "spam", "snoozed"
   replies: string; // Serialized JSON string from DB
   recipient_email?: string; // Recognized inbound email
+  tags?: string;
+  snoozed_until?: string;
   created_at: string;
 }
 
@@ -138,6 +140,7 @@ export default function ZohoTicketsPage() {
   const [activeTicketId, setActiveTicketId] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<"kanban" | "table">("kanban");
   const [activeFilter, setActiveFilter] = useState<string>("all");
+  const [statusFilter, setStatusFilter] = useState<"unresolved" | "resolved" | "all">("unresolved");
   const [searchQuery, setSearchQuery] = useState<string>("");
   
   // Right side CRM integration
@@ -280,6 +283,73 @@ export default function ZohoTicketsPage() {
     }
   };
 
+  const handleUpdateStatus = async (status: string) => {
+    if (!activeTicket) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/oms/tickets/${activeTicket.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, snoozed_until: null }),
+      });
+      if (res.ok) {
+        loadTickets();
+        alert(`Ticket marked as ${status}`);
+      } else {
+        alert("Failed to update status.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error updating status.");
+    }
+  };
+
+  const handleSnoozeTicket = async () => {
+    if (!activeTicket) return;
+    const snoozeTime = new Date();
+    snoozeTime.setHours(snoozeTime.getHours() + 24);
+    try {
+      const res = await fetch(`${API_BASE}/api/oms/tickets/${activeTicket.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: "snoozed",
+          snoozed_until: snoozeTime.toISOString()
+        }),
+      });
+      if (res.ok) {
+        loadTickets();
+        alert("Ticket snoozed for 24 hours.");
+      } else {
+        alert("Failed to snooze ticket.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error snoozing ticket.");
+    }
+  };
+
+  const handleToggleSpam = async () => {
+    if (!activeTicket) return;
+    const isSpam = activeTicket.tags?.includes("spam");
+    const newTags = isSpam ? "" : "spam";
+    try {
+      const res = await fetch(`${API_BASE}/api/oms/tickets/${activeTicket.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: newTags }),
+      });
+      if (res.ok) {
+        loadTickets();
+        alert(isSpam ? "Spam tag removed" : "Ticket tagged as Spam");
+      } else {
+        alert("Failed to toggle spam tag.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Error toggling spam tag.");
+    }
+  };
+
   const getTicketReplies = (ticket: Ticket): string[] => {
     if (!ticket.replies) return [];
     try {
@@ -329,37 +399,55 @@ export default function ZohoTicketsPage() {
       
       if (!textMatch) return false;
 
-      // 2. Active Sidebar filter
+      // 2. Spam filter
+      const isSpam = t.tags?.includes("spam");
+      if (activeFilter === "spam") {
+        if (!isSpam) return false;
+      } else {
+        if (isSpam) return false; // Hide spam by default from other views
+      }
+
+      // 3. Active Sidebar filter
       const rec = (t.recipient_email || "").toLowerCase();
       const hours = getHoursSinceCreated(t.created_at);
 
+      let matchesSidebar = true;
       if (activeFilter === "wairaiders") {
-        return rec.includes("wairaiders");
+        matchesSidebar = rec.includes("wairaiders");
+      } else if (activeFilter === "vulius") {
+        matchesSidebar = rec.includes("vulius");
+      } else if (activeFilter === "other") {
+        matchesSidebar = rec !== "" && !rec.includes("wairaiders") && !rec.includes("vulius");
+      } else if (activeFilter === "overdue") {
+        matchesSidebar = t.status === "open" && hours >= 24;
+      } else if (activeFilter === "due6h") {
+        matchesSidebar = t.status === "open" && hours >= 18 && hours < 24;
+      } else if (activeFilter === "due12h") {
+        matchesSidebar = t.status === "open" && hours < 18;
+      } else if (activeFilter === "open") {
+        matchesSidebar = t.status === "open";
+      } else if (activeFilter === "pending") {
+        matchesSidebar = t.status === "pending";
+      } else if (activeFilter === "resolved") {
+        matchesSidebar = t.status === "resolved";
+      } else if (activeFilter === "snoozed") {
+        matchesSidebar = t.status === "snoozed";
       }
-      if (activeFilter === "vulius") {
-        return rec.includes("vulius");
+
+      if (!matchesSidebar) return false;
+
+      // 4. Status sub-filter
+      const isStatusSpecificFilter = ["open", "pending", "resolved", "snoozed", "spam", "overdue", "due6h", "due12h"].includes(activeFilter);
+      if (!isStatusSpecificFilter) {
+        if (t.status === "snoozed") return false;
+        if (statusFilter === "unresolved") {
+          return t.status === "open" || t.status === "pending";
+        }
+        if (statusFilter === "resolved") {
+          return t.status === "resolved";
+        }
       }
-      if (activeFilter === "other") {
-        return rec !== "" && !rec.includes("wairaiders") && !rec.includes("vulius");
-      }
-      if (activeFilter === "overdue") {
-        return t.status === "open" && hours >= 24;
-      }
-      if (activeFilter === "due6h") {
-        return t.status === "open" && hours >= 18 && hours < 24;
-      }
-      if (activeFilter === "due12h") {
-        return t.status === "open" && hours < 18;
-      }
-      if (activeFilter === "open") {
-        return t.status === "open";
-      }
-      if (activeFilter === "pending") {
-        return t.status === "pending";
-      }
-      if (activeFilter === "resolved") {
-        return t.status === "resolved";
-      }
+
       return true;
     });
   };
@@ -541,6 +629,26 @@ export default function ZohoTicketsPage() {
             >
               <span>✔️</span> Resolved
             </button>
+            <button
+              onClick={() => { setActiveFilter("snoozed"); setActiveTicketId(null); }}
+              style={{
+                display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "8px 12px", border: "none", borderRadius: "6px",
+                background: activeFilter === "snoozed" ? "#f1f5f9" : "transparent", color: activeFilter === "snoozed" ? "var(--accent)" : "var(--text-secondary)",
+                fontSize: "13px", fontWeight: activeFilter === "snoozed" ? "600" : "500", cursor: "pointer", textAlign: "left"
+              }}
+            >
+              <span>⏱️</span> Snoozed
+            </button>
+            <button
+              onClick={() => { setActiveFilter("spam"); setActiveTicketId(null); }}
+              style={{
+                display: "flex", alignItems: "center", gap: "10px", width: "100%", padding: "8px 12px", border: "none", borderRadius: "6px",
+                background: activeFilter === "spam" ? "#f1f5f9" : "transparent", color: activeFilter === "spam" ? "var(--accent)" : "var(--text-secondary)",
+                fontSize: "13px", fontWeight: activeFilter === "spam" ? "600" : "500", cursor: "pointer", textAlign: "left"
+              }}
+            >
+              <span>🚫</span> Spam/Marketing
+            </button>
           </div>
 
           <div style={{ padding: "20px 16px 12px 16px", borderBottom: "1px solid #f1f5f9", marginBottom: "12px" }}>
@@ -587,8 +695,45 @@ export default function ZohoTicketsPage() {
                   />
                 </div>
                 
-                {/* View switcher */}
-                <div style={{ display: "flex", background: "#e2e8f0", padding: "3px", borderRadius: "8px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                  {/* Status sub-filter */}
+                  {!["open", "pending", "resolved", "snoozed", "spam", "overdue", "due6h", "due12h"].includes(activeFilter) && (
+                    <div style={{ display: "flex", background: "#e2e8f0", padding: "3px", borderRadius: "8px" }}>
+                      <button
+                        onClick={() => setStatusFilter("all")}
+                        style={{
+                          padding: "6px 12px", border: "none", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", cursor: "pointer",
+                          background: statusFilter === "all" ? "#ffffff" : "transparent", color: statusFilter === "all" ? "var(--text-primary)" : "var(--text-secondary)",
+                          boxShadow: statusFilter === "all" ? "0 1px 3px rgba(0,0,0,0.1)" : "none", transition: "all 0.15s"
+                        }}
+                      >
+                        All
+                      </button>
+                      <button
+                        onClick={() => setStatusFilter("unresolved")}
+                        style={{
+                          padding: "6px 12px", border: "none", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", cursor: "pointer",
+                          background: statusFilter === "unresolved" ? "#ffffff" : "transparent", color: statusFilter === "unresolved" ? "var(--text-primary)" : "var(--text-secondary)",
+                          boxShadow: statusFilter === "unresolved" ? "0 1px 3px rgba(0,0,0,0.1)" : "none", transition: "all 0.15s"
+                        }}
+                      >
+                        Unresolved
+                      </button>
+                      <button
+                        onClick={() => setStatusFilter("resolved")}
+                        style={{
+                          padding: "6px 12px", border: "none", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", cursor: "pointer",
+                          background: statusFilter === "resolved" ? "#ffffff" : "transparent", color: statusFilter === "resolved" ? "var(--text-primary)" : "var(--text-secondary)",
+                          boxShadow: statusFilter === "resolved" ? "0 1px 3px rgba(0,0,0,0.1)" : "none", transition: "all 0.15s"
+                        }}
+                      >
+                        Resolved
+                      </button>
+                    </div>
+                  )}
+
+                  {/* View switcher */}
+                  <div style={{ display: "flex", background: "#e2e8f0", padding: "3px", borderRadius: "8px" }}>
                   <button
                     onClick={() => setViewMode("kanban")}
                     style={{
@@ -611,6 +756,7 @@ export default function ZohoTicketsPage() {
                   </button>
                 </div>
               </div>
+            </div>
 
               {loading ? (
                 <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1 }}>
@@ -841,8 +987,20 @@ export default function ZohoTicketsPage() {
                               </span>
                             </td>
                             <td style={{ padding: "12px 16px", fontSize: "13px", fontWeight: "600", maxWidth: "250px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              {t.subject}
-                            </td>
+                               <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                 <span>{t.subject}</span>
+                                 {t.tags?.includes("spam") && (
+                                   <span style={{ fontSize: "9px", padding: "1px 4px", borderRadius: "3px", background: "#fee2e2", color: "#ef4444", fontWeight: "bold" }}>
+                                     Spam
+                                   </span>
+                                 )}
+                                 {t.status === "snoozed" && (
+                                   <span style={{ fontSize: "9px", padding: "1px 4px", borderRadius: "3px", background: "#dbeafe", color: "#1e40af", fontWeight: "bold" }}>
+                                     Snoozed
+                                   </span>
+                                 )}
+                               </div>
+                             </td>
                             <td style={{ padding: "12px 16px", fontSize: "13px" }}>
                               <span style={{
                                 padding: "2px 8px", borderRadius: "99px", fontSize: "11px", fontWeight: "bold", textTransform: "uppercase",
@@ -887,11 +1045,44 @@ export default function ZohoTicketsPage() {
                     >
                       ⬅️ Back to Dashboard
                     </button>
+
+                    {/* Quick action buttons */}
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <button
+                        onClick={() => handleUpdateStatus("resolved")}
+                        style={{ background: "#10b981", color: "white", border: "none", padding: "6px 12px", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px" }}
+                      >
+                        ✔️ Solve
+                      </button>
+                      <button
+                        onClick={() => handleUpdateStatus("pending")}
+                        style={{ background: "#f59e0b", color: "white", border: "none", padding: "6px 12px", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px" }}
+                      >
+                        ⏳ Pending
+                      </button>
+                      <button
+                        onClick={() => handleSnoozeTicket()}
+                        style={{ background: "#3b82f6", color: "white", border: "none", padding: "6px 12px", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", cursor: "pointer", display: "flex", alignItems: "center", gap: "4px" }}
+                      >
+                        ⏱️ Wait 24 Hours
+                      </button>
+                      <button
+                        onClick={() => handleToggleSpam()}
+                        style={{
+                          background: activeTicket.tags?.includes("spam") ? "#ef4444" : "#f1f5f9",
+                          color: activeTicket.tags?.includes("spam") ? "white" : "var(--text-secondary)",
+                          border: "1px solid #cbd5e1", padding: "6px 12px", borderRadius: "6px", fontSize: "12px", fontWeight: "bold", cursor: "pointer"
+                        }}
+                      >
+                        {activeTicket.tags?.includes("spam") ? "🚫 Tagged Spam" : "🏳️ Mark as Spam"}
+                      </button>
+                    </div>
+
                     <span
                       style={{
                         padding: "3px 12px", borderRadius: "999px", fontSize: "11px", fontWeight: "bold", textTransform: "uppercase",
-                        background: activeTicket.status === "open" ? "#fee2e2" : activeTicket.status === "resolved" ? "#d1fae5" : "#fef3c7",
-                        color: activeTicket.status === "open" ? "#dc2626" : activeTicket.status === "resolved" ? "#065f46" : "#d97706"
+                        background: activeTicket.status === "open" ? "#fee2e2" : activeTicket.status === "resolved" ? "#d1fae5" : activeTicket.status === "snoozed" ? "#dbeafe" : "#fef3c7",
+                        color: activeTicket.status === "open" ? "#dc2626" : activeTicket.status === "resolved" ? "#065f46" : activeTicket.status === "snoozed" ? "#1e40af" : "#d97706"
                       }}
                     >
                       {activeTicket.status}

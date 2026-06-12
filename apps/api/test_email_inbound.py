@@ -63,6 +63,30 @@ def run_inbound_email_tests():
         assert json.loads(ticket_db.replies) == []
         print("✅ DB record verified for first email ticket!")
 
+        # 3.1 Test Spam Auto-Detection and Tagging
+        print("\n[Step 3.1] Testing Spam Auto-Detection and Tagging...")
+        spam_payload = {
+            "sender": "agency_marketer@randomagency.com",
+            "sender_name": "Agency Marketer",
+            "recipient": "contact@wairaiders.com",
+            "subject": "Boost your Trustpilot profile reviews",
+            "body_text": "Hello, I noticed your Trustpilot presence doesn't reflect your actual brand quality. We can help you build trust and increase sales with our SEO/marketing services."
+        }
+        res_spam = client.post(
+            "/api/oms/webhook/email/inbound?secret=JOT_INGESTION_SECRET",
+            json=spam_payload
+        )
+        assert res_spam.status_code == 200
+        spam_ticket_id = res_spam.json()["ticket_id"]
+        spam_ticket_db = db.query(Ticket).filter(Ticket.id == spam_ticket_id).first()
+        assert spam_ticket_db is not None
+        assert "spam" in (spam_ticket_db.tags or "")
+        print("✅ Spam/Marketing email was successfully auto-detected and tagged as 'spam'!")
+        
+        # Clean up spam ticket
+        db.query(Ticket).filter(Ticket.id == spam_ticket_id).delete()
+        db.commit()
+
         # 4. Test Authorized Inbound Webhook - Automatic Threading / Appending Reply
         print("\n[Step 4] Testing Authorized Webhook Call - Thread Matching & Appending...")
         followup_payload = {

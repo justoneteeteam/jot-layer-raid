@@ -432,11 +432,11 @@ def get_orders(
     if platform:
         # Support case-insensitive loose store match
         if platform.lower() == "woo":
-            query = query.filter(Order.store_id.like("%WooCommerce%"))
+            query = query.filter(Order.store_id.ilike("%WooCommerce%"))
         elif platform.lower() == "sb":
-            query = query.filter(Order.store_id.like("%ShopBase%"))
+            query = query.filter(Order.store_id.ilike("%ShopBase%"))
         else:
-            query = query.filter(Order.store_id.like(f"%{platform}%"))
+            query = query.filter(Order.store_id.ilike(f"%{platform}%"))
             
     if shipping_status:
         query = query.filter(Order.shipping_status == shipping_status.lower())
@@ -446,19 +446,19 @@ def get_orders(
         sf = search_field.lower() if search_field else "all"
         
         if sf == "order_id":
-            query = query.filter(Order.order_id.like(search_filter))
+            query = query.filter(Order.order_id.ilike(search_filter))
         elif sf == "customer_name":
-            query = query.filter(Order.customer_name.like(search_filter))
+            query = query.filter(Order.customer_name.ilike(search_filter))
         elif sf == "customer_email":
-            query = query.filter(Order.customer_email.like(search_filter))
+            query = query.filter(Order.customer_email.ilike(search_filter))
         elif sf == "product_name":
-            query = query.filter(Order.product_name.like(search_filter))
+            query = query.filter(Order.product_name.ilike(search_filter))
         else:
             query = query.filter(
-                (Order.customer_name.like(search_filter)) |
-                (Order.order_id.like(search_filter)) |
-                (Order.customer_email.like(search_filter)) |
-                (Order.product_name.like(search_filter))
+                (Order.customer_name.ilike(search_filter)) |
+                (Order.order_id.ilike(search_filter)) |
+                (Order.customer_email.ilike(search_filter)) |
+                (Order.product_name.ilike(search_filter))
             )
 
     if start_date:
@@ -1521,6 +1521,70 @@ def reply_to_ticket(ticket_id: int, reply: dict, db: Session = Depends(get_db)):
     return {"status": "ok", "message": f"Reply successfully sent to {ticket.customer_email} and status updated to {status}."}
 
 
+def check_is_spam_marketing(customer_email: str, subject: str, message: str, db: Session) -> bool:
+    # 1. Check if the customer has any orders in the database
+    has_orders = db.query(Order).filter(Order.customer_email == customer_email).first() is not None
+    if has_orders:
+        return False
+        
+    # 2. Check for common spam/marketing keywords/patterns
+    text = (subject + " " + (message or "")).lower()
+    spam_keywords = [
+        "trustpilot", 
+        "seo audit", 
+        "marketing services", 
+        "boost your rankings", 
+        "increase your sales", 
+        "digital marketing",
+        "cooperation",
+        "partnership proposal",
+        "we can help your brand",
+        "guest post",
+        "sponsored post",
+        "link building",
+        "improve your website",
+        "came across your business",
+        "researching companies",
+        "schedule a call",
+        "book a demo"
+    ]
+    
+    return any(kw in text for kw in spam_keywords)
+
+
+@router.patch("/tickets/{ticket_id}")
+def update_ticket(ticket_id: int, payload: dict, db: Session = Depends(get_db)):
+    """Update ticket fields (status, tags, snoozed_until, etc.)."""
+    ticket = db.query(Ticket).filter(Ticket.id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    
+    if "status" in payload:
+        ticket.status = payload["status"]
+    if "tags" in payload:
+        ticket.tags = payload["tags"]
+    if "snoozed_until" in payload:
+        val = payload["snoozed_until"]
+        if val:
+            try:
+                ticket.snoozed_until = datetime.fromisoformat(val.replace("Z", "+00:00")).replace(tzinfo=None)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid date format for snoozed_until")
+        else:
+            ticket.snoozed_until = None
+            
+    db.commit()
+    return {
+        "status": "ok", 
+        "ticket": {
+            "id": ticket.id,
+            "status": ticket.status,
+            "tags": ticket.tags,
+            "snoozed_until": ticket.snoozed_until.isoformat() if ticket.snoozed_until else None
+        }
+    }
+
+
 @router.post("/webhook/email/inbound")
 def inbound_support_email_webhook(
     payload: dict,
@@ -1601,7 +1665,8 @@ def inbound_support_email_webhook(
             "ticket_id": existing_ticket.id
         }
     else:
-        # Create a new support ticket
+        # Create a new support support ticket
+        is_spam = check_is_spam_marketing(sender, subject, body_text, db)
         new_ticket = Ticket(
             customer_name=sender_name,
             customer_email=sender,
@@ -1609,7 +1674,8 @@ def inbound_support_email_webhook(
             message=body_text,
             status="open",
             replies="[]",
-            recipient_email=recipient
+            recipient_email=recipient,
+            tags="spam" if is_spam else ""
         )
         db.add(new_ticket)
         db.commit()
@@ -2192,5 +2258,21 @@ def woocommerce_order_created_webhook(
     else:
         logger.info(f"Successfully processed WooCommerce webhook for order {order_id} (email was skipped or simulated).")
         return {"status": "success", "message": f"Order {order_id} created successfully. Confirmation email was not sent (disabled or simulated)."}
+
+
+@router.post("/webhook/astro")
+@router.post("/webhook/astro/order-created")
+def astro_order_created_webhook(
+    payload: dict,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Webhook triggered immediately by the Astro storefront when a new order is placed.
+    Triggers a sync of Astro orders instantly.
+    """
+    background_tasks.add_task(sync_orders, platform="astro", db=db)
+    return {"status": "ok", "message": "Astro sync triggered immediately."}
+
 
 
