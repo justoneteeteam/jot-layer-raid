@@ -123,6 +123,35 @@ const parseReply = (rawReply: string) => {
   return { sender, timestamp, message, align, bg, border, textColor, borderRadius };
 };
 
+// Detect and safely render HTML message bodies
+const isHtmlContent = (text: string): boolean => {
+  return /<(html|body|table|td|tr|p|div|span|br|img|a|ul|li|h[1-6])[\s>]/i.test(text);
+};
+
+const sanitizeHtml = (html: string): string => {
+  // Remove tracking pixels (1x1 images from sendgrid, etc.)
+  let clean = html.replace(/<img[^>]+(?:width=["']?1["']?[^>]*height=["']?1["']?|height=["']?1["']?[^>]*width=["']?1["']?)[^>]*>/gi, "");
+  // Remove <script> and <style> tags
+  clean = clean.replace(/<script[\s\S]*?<\/script>/gi, "");
+  clean = clean.replace(/<style[\s\S]*?<\/style>/gi, "");
+  // Remove tracking URLs embedded in <img src="..."> from known senders
+  clean = clean.replace(/<img[^>]+src=["'][^"']*(?:sendgrid\.net|tracking|pixel|open|wf\/open)[^"']*["'][^>]*>/gi, "");
+  return clean;
+};
+
+const MessageBody = ({ content }: { content: string }) => {
+  if (isHtmlContent(content)) {
+    return (
+      <div
+        className="html-message-body"
+        style={{ fontSize: "13px", lineHeight: "1.6" }}
+        dangerouslySetInnerHTML={{ __html: sanitizeHtml(content) }}
+      />
+    );
+  }
+  return <span style={{ whiteSpace: "pre-line" }}>{content}</span>;
+};
+
 // Calculate time difference in hours to allocate SLA columns
 const getHoursSinceCreated = (dateStr: string) => {
   if (!dateStr) return 0;
@@ -1128,11 +1157,11 @@ export default function ZohoTicketsPage() {
                 <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "12px", paddingRight: "4px", marginBottom: "16px" }}>
                   
                   {/* Customer question bubble */}
-                  <div style={{ alignSelf: "flex-start", maxWidth: "85%", background: "var(--bg-secondary)", border: "1px solid var(--border-default)", padding: "12px 14px", borderRadius: "12px 12px 12px 0", color: "var(--text-primary)", fontSize: "13px", lineHeight: "1.5", whiteSpace: "pre-line" }}>
+                  <div style={{ alignSelf: "flex-start", maxWidth: "85%", background: "var(--bg-secondary)", border: "1px solid var(--border-default)", padding: "12px 14px", borderRadius: "12px 12px 12px 0", color: "var(--text-primary)", fontSize: "13px", lineHeight: "1.5" }}>
                     <div style={{ fontSize: "10px", color: "var(--text-secondary)", fontWeight: "bold", marginBottom: "4px" }}>
                       👤 {activeTicket.customer_name} &lt;{activeTicket.customer_email}&gt;
                     </div>
-                    {activeTicket.message}
+                    <MessageBody content={activeTicket.message} />
                     <div style={{ fontSize: "9px", color: "var(--text-muted)", textAlign: "right", marginTop: "6px" }}>
                       {formatTimelineDate(activeTicket.created_at)}
                     </div>
@@ -1154,7 +1183,6 @@ export default function ZohoTicketsPage() {
                           color: parsed.textColor,
                           fontSize: "13px",
                           lineHeight: "1.5",
-                          whiteSpace: "pre-line"
                         }}
                       >
                         <div style={{ fontSize: "10px", color: parsed.textColor === "var(--text-primary)" ? "var(--text-secondary)" : parsed.textColor, fontWeight: "bold", marginBottom: "4px", textTransform: "uppercase", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "12px" }}>
@@ -1165,7 +1193,7 @@ export default function ZohoTicketsPage() {
                             </span>
                           )}
                         </div>
-                        {parsed.message}
+                        <MessageBody content={parsed.message} />
                       </div>
                     );
                   })}

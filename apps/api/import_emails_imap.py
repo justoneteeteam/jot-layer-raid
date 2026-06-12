@@ -46,46 +46,69 @@ def decode_header_value(header_val):
 
 
 def get_body_text(msg):
-    body = ""
-    if msg.is_multipart():
-        # Look for text/plain first
-        for part in msg.walk():
-            content_type = part.get_content_type()
-            content_disposition = str(part.get("Content-Disposition"))
-            if content_type == "text/plain" and "attachment" not in content_disposition:
-                try:
-                    payload = part.get_payload(decode=True)
-                    if payload:
-                        return payload.decode('utf-8', errors='replace')
-                except Exception:
-                    pass
+    """
+    Extracts the best message body from an email.
+    - Prefers text/plain, but if the plain body itself contains raw HTML tags
+      (e.g. Shopify contact form emails relayed via SendGrid) we use text/html instead.
+    - Falls back to BeautifulSoup or regex stripping when only HTML is available.
+    """
+    plain_body = None
+    html_body = None
 
-        # Fallback to text/html
+    if msg.is_multipart():
         for part in msg.walk():
             content_type = part.get_content_type()
             content_disposition = str(part.get("Content-Disposition"))
-            if content_type == "text/html" and "attachment" not in content_disposition:
-                try:
-                    payload = part.get_payload(decode=True)
-                    if payload:
-                        html_content = payload.decode('utf-8', errors='replace')
-                        if BeautifulSoup:
-                            soup = BeautifulSoup(html_content, "html.parser")
-                            return soup.get_text()
-                        else:
-                            # Basic regex replacement of HTML tags if BeautifulSoup is missing
-                            clean_text = re.sub('<[^<]+?>', '', html_content)
-                            return clean_text
-                except Exception:
-                    pass
+            if "attachment" in content_disposition:
+                continue
+            try:
+                payload = part.get_payload(decode=True)
+                if not payload:
+                    continue
+                decoded = payload.decode('utf-8', errors='replace')
+                if content_type == "text/plain" and plain_body is None:
+                    plain_body = decoded
+                elif content_type == "text/html" and html_body is None:
+                    html_body = decoded
+            except Exception:
+                pass
     else:
         try:
             payload = msg.get_payload(decode=True)
             if payload:
-                body = payload.decode('utf-8', errors='replace')
+                plain_body = payload.decode('utf-8', errors='replace')
         except Exception:
             pass
-    return body
+
+    # If plain body exists but contains raw HTML tags, discard it and use HTML part
+    if plain_body:
+        html_tag_pattern = re.compile(r'<(html|body|table|td|tr|p|div|span|br|img)[\\s>]', re.IGNORECASE)
+        if html_tag_pattern.search(plain_body) and html_body:
+            # plain body is raw HTML — use the actual HTML part instead
+            plain_body = None
+        elif html_tag_pattern.search(plain_body) and not html_body:
+            # Only have plain-that-is-actually-HTML — store the HTML directly
+            # so the frontend can render it; strip tracking pixels server-side
+            clean = re.sub(r'<img[^>]+(?:sendgrid\.net|tracking|pixel|wf/open)[^>]*>', '', plain_body, flags=re.IGNORECASE)
+            return clean
+
+    if plain_body:
+        return plain_body
+
+    # Fallback: strip HTML from html_body
+    if html_body:
+        if BeautifulSoup:
+            soup = BeautifulSoup(html_body, "html.parser")
+            # Remove tracking pixels
+            for img in soup.find_all("img", src=re.compile(r'sendgrid|tracking|pixel|wf/open', re.I)):
+                img.decompose()
+            return str(soup)
+        else:
+            clean = re.sub(r'<[^<]+?>', '', html_body)
+            return clean
+
+    return ""
+
 
 
 def main():
