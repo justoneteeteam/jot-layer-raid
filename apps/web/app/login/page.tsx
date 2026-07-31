@@ -95,12 +95,12 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label className="form-label" htmlFor="email">Email Address</label>
+            <label className="form-label" htmlFor="email">Username or Email</label>
             <input
               id="email"
-              type="email"
+              type="text"
               className="input"
-              placeholder="contact@wairaiders.com"
+              placeholder="admin"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required

@@ -181,6 +181,15 @@ export default function ZohoTicketsPage() {
   const [selectedFromEmail, setSelectedFromEmail] = useState("");
   const [replying, setReplying] = useState(false);
 
+  // Manual ticket creation states
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createCustomerEmail, setCreateCustomerEmail] = useState("");
+  const [createCustomerName, setCreateCustomerName] = useState("");
+  const [createSenderEmail, setCreateSenderEmail] = useState("");
+  const [createSubject, setCreateSubject] = useState("");
+  const [createMessage, setCreateMessage] = useState("");
+  const [creatingTicket, setCreatingTicket] = useState(false);
+
   const activeTicket = tickets.find((t) => t.id === activeTicketId);
 
   // Fallback sender list if DB is empty
@@ -376,6 +385,55 @@ export default function ZohoTicketsPage() {
     } catch (err) {
       console.error(err);
       alert("Error toggling spam tag.");
+    }
+  };
+
+  const resetCreateFields = () => {
+    setCreateCustomerEmail("");
+    setCreateCustomerName("");
+    setCreateSenderEmail("");
+    setCreateSubject("");
+    setCreateMessage("");
+  };
+
+  const handleCreateTicket = async () => {
+    if (!createCustomerEmail.trim() || !createCustomerName.trim() || !createSenderEmail.trim() || !createSubject.trim() || !createMessage.trim()) {
+      alert("Please fill out all fields.");
+      return;
+    }
+    if (!createCustomerEmail.includes("@")) {
+      alert("Please enter a valid customer email.");
+      return;
+    }
+
+    setCreatingTicket(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/oms/tickets/new`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_email: createCustomerEmail.trim(),
+          customer_name: createCustomerName.trim(),
+          recipient_email: createSenderEmail.trim(),
+          subject: createSubject.trim(),
+          message: createMessage.trim()
+        }),
+      });
+
+      if (res.ok) {
+        alert("Manual ticket created and initial email dispatched successfully!");
+        setShowCreateModal(false);
+        resetCreateFields();
+        loadTickets(); // Refresh dashboard
+      } else {
+        const err = await res.json();
+        alert(`Failed to create ticket: ${err.error || "Unknown error"}`);
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Error creating ticket.");
+    } finally {
+      setCreatingTicket(false);
     }
   };
 
@@ -722,6 +780,31 @@ export default function ZohoTicketsPage() {
                     onChange={(e) => setSearchQuery(e.target.value)}
                     style={{ width: "280px", height: "36px", borderRadius: "8px", border: "1px solid #cbd5e1", padding: "0 12px", fontSize: "13px" }}
                   />
+                  <button
+                    onClick={() => {
+                      const list = getSenderList();
+                      if (list.length > 0 && list[0]) {
+                        setCreateSenderEmail(list[0].from_email || "");
+                      }
+                      setShowCreateModal(true);
+                    }}
+                    style={{
+                      background: "#ea580c",
+                      color: "white",
+                      border: "none",
+                      padding: "0 16px",
+                      height: "36px",
+                      borderRadius: "8px",
+                      fontSize: "13px",
+                      fontWeight: "bold",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "6px"
+                    }}
+                  >
+                    ➕ New Ticket
+                  </button>
                 </div>
                 
                 <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
@@ -1360,6 +1443,174 @@ export default function ZohoTicketsPage() {
         </div>
 
       </div>
+
+      {/* Manual Ticket Creation Modal (Freshdesk style overlay) */}
+      {showCreateModal && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          width: "100vw",
+          height: "100vh",
+          background: "rgba(15, 23, 42, 0.6)",
+          backdropFilter: "blur(4px)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 9999,
+        }}>
+          <div style={{
+            background: "white",
+            width: "550px",
+            borderRadius: "16px",
+            boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)",
+            border: "1px solid #e2e8f0",
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden"
+          }}>
+            {/* Header */}
+            <div style={{
+              padding: "18px 24px",
+              borderBottom: "1px solid #f1f5f9",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              background: "#f8fafc"
+            }}>
+              <h3 style={{ margin: 0, fontSize: "16px", fontWeight: "bold", color: "#0f172a" }}>
+                ➕ Create New Support Ticket
+              </h3>
+              <button 
+                onClick={() => {
+                  setShowCreateModal(false);
+                  resetCreateFields();
+                }}
+                style={{ background: "transparent", border: "none", fontSize: "18px", cursor: "pointer", color: "#64748b" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: "24px", display: "flex", flexDirection: "column", gap: "16px", maxHeight: "70vh", overflowY: "auto" }}>
+              
+              {/* Row 1: Cust Email & Cust Name */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <label style={{ fontSize: "12px", fontWeight: "600", color: "#334155" }}>Customer Email</label>
+                  <input 
+                    type="email" 
+                    placeholder="customer@example.com"
+                    value={createCustomerEmail}
+                    onChange={(e) => setCreateCustomerEmail(e.target.value)}
+                    style={{ width: "100%", height: "38px", borderRadius: "8px", border: "1px solid #cbd5e1", padding: "0 12px", fontSize: "13px" }}
+                  />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                  <label style={{ fontSize: "12px", fontWeight: "600", color: "#334155" }}>Customer Name</label>
+                  <input 
+                    type="text" 
+                    placeholder="John Doe"
+                    value={createCustomerName}
+                    onChange={(e) => setCreateCustomerName(e.target.value)}
+                    style={{ width: "100%", height: "38px", borderRadius: "8px", border: "1px solid #cbd5e1", padding: "0 12px", fontSize: "13px" }}
+                  />
+                </div>
+              </div>
+
+              {/* Row 2: Sender Email Select */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "12px", fontWeight: "600", color: "#334155" }}>Send From Store Identity</label>
+                <select
+                  value={createSenderEmail}
+                  onChange={(e) => setCreateSenderEmail(e.target.value)}
+                  style={{ width: "100%", height: "38px", borderRadius: "8px", border: "1px solid #cbd5e1", padding: "0 10px", fontSize: "13px", background: "white" }}
+                >
+                  <option value="">-- Select Store Sender Address --</option>
+                  {getSenderList().map(s => (
+                    <option key={s.id} value={s.from_email}>
+                      {s.from_name} ({s.from_email})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Row 3: Subject */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "12px", fontWeight: "600", color: "#334155" }}>Subject</label>
+                <input 
+                  type="text" 
+                  placeholder="e.g. Size update for your order"
+                  value={createSubject}
+                  onChange={(e) => setCreateSubject(e.target.value)}
+                  style={{ width: "100%", height: "38px", borderRadius: "8px", border: "1px solid #cbd5e1", padding: "0 12px", fontSize: "13px" }}
+                />
+              </div>
+
+              {/* Row 4: Initial Message */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                <label style={{ fontSize: "12px", fontWeight: "600", color: "#334155" }}>Initial Outgoing Message</label>
+                <textarea 
+                  placeholder="Write your email body here. This will be sent directly to the customer."
+                  value={createMessage}
+                  onChange={(e) => setCreateMessage(e.target.value)}
+                  style={{ width: "100%", height: "120px", borderRadius: "8px", border: "1px solid #cbd5e1", padding: "12px", fontSize: "13px", resize: "none", fontFamily: "inherit" }}
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div style={{
+              padding: "16px 24px",
+              borderTop: "1px solid #f1f5f9",
+              display: "flex",
+              justifyContent: "flex-end",
+              gap: "12px",
+              background: "#f8fafc"
+            }}>
+              <button 
+                onClick={() => {
+                  setShowCreateModal(false);
+                  resetCreateFields();
+                }}
+                disabled={creatingTicket}
+                style={{
+                  background: "white",
+                  border: "1px solid #cbd5e1",
+                  padding: "8px 16px",
+                  borderRadius: "8px",
+                  fontSize: "13px",
+                  fontWeight: "bold",
+                  cursor: "pointer",
+                  color: "#334155"
+                }}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={handleCreateTicket}
+                disabled={creatingTicket}
+                style={{
+                  background: "#ea580c",
+                  border: "none",
+                  padding: "8px 16px",
+                  borderRadius: "8px",
+                  fontSize: "13px",
+                  fontWeight: "bold",
+                  cursor: "pointer",
+                  color: "white",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "6px"
+                }}
+              >
+                {creatingTicket ? "Sending..." : "✉️ Send & Open Ticket"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

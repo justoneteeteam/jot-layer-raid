@@ -39,10 +39,10 @@ export default function DashboardPage() {
           <div className="empty-state-icon">🚀</div>
           <div className="empty-state-title">Welcome to JOTLayerRaid</div>
           <div className="empty-state-text">
-            Start by uploading a jersey image in the AI Creator, or import your player database.
+            Start by uploading a jersey image to create a template, or import your player database.
           </div>
           <a href="/mockups/create" className="btn btn-primary">
-            🤖 Open AI Creator
+            ➕ Create Mockup Template
           </a>
         </div>
       </div>

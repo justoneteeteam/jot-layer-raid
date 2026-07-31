@@ -1,0 +1,65 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "api-worker",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-09",
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "jotlayerraid-db",
+      "database_id": "d4e061cb-72cc-49f6-9562-092a3cd4a27b",
+      "migrations_dir": "./drizzle"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "jot-layer-raid-bucket"
+    }
+  ],
+  "ai": {
+    "binding": "AI"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "FONTS_CACHE_KV",
+      "id": "f9d69ed778704bbea0b77e36ca454f8a"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "BULK_QUEUE",
+        "queue": "bulk-jersey-jobs"
+      },
+      {
+        "binding": "PINTEREST_QUEUE",
+        "queue": "pinterest-jobs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "bulk-jersey-jobs",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5
+      },
+      {
+        "queue": "pinterest-jobs",
+        "max_batch_size": 5,
+        "max_batch_timeout": 10
+      }
+    ]
+  },
+  "vars": {
+    "TELEGRAM_BOT_TOKEN": "8882930959:AAHsK_WL5CF0_Et8ZRuFS9EnCFdlRryiwdM",
+    "TELEGRAM_CHAT_ID": "-1003926357837",
+    "R2_PUBLIC_URL": "https://pub-3981afcf4d1b47279c20739515baec8f.r2.dev",
+    "CLOUDFLARE_ACCOUNT_ID": "9652ef512b6b62d4438251e9dc144a4a",
+    "CLOUDFLARE_API_TOKEN": ""
+  },
+  "triggers": {
+    "crons": [
+      "0 0 * * 1"
+    ]
+  }
+}

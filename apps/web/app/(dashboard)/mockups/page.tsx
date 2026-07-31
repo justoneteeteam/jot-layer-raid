@@ -66,7 +66,7 @@ export default function MockupsPage() {
       <div className="card">
         <div className="card-header">
           <h2 className="card-title">Mockup Templates</h2>
-          <a href="/mockups/create" className="btn btn-primary">🤖 AI Creator</a>
+          <a href="/mockups/create" className="btn btn-primary">➕ Create Template</a>
         </div>
         
         {templates.length === 0 ? (
@@ -74,7 +74,7 @@ export default function MockupsPage() {
             <div style={{ fontSize: 48, marginBottom: 16 }}>🎽</div>
             <h3 style={{ fontWeight: 600, fontSize: 18, marginBottom: 8 }}>No Mockup Templates Yet</h3>
             <p style={{ color: "var(--text-secondary)", marginBottom: 24, maxWidth: 400, marginLeft: "auto", marginRight: "auto" }}>
-              Create a custom jersey template from a background image using the AI Creator to start editing.
+              Create a custom mockup template by uploading a jersey image.
             </p>
             <a href="/mockups/create" className="btn btn-primary">Create First Template</a>
           </div>

@@ -2,6 +2,8 @@
 
 import { useState, useRef, type DragEvent } from "react";
 
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 interface ParsedRow { [key: string]: string; }
 
 const EXPECTED_COLUMNS = ["Team", "Player Name", "Display Name", "Number", "Type", "Group"];
@@ -95,9 +97,61 @@ export default function CSVImportPage() {
 
   const handleImport = async () => {
     setImporting(true);
-    await new Promise((r) => setTimeout(r, 1500));
-    setImporting(false);
-    setImportDone(true);
+    
+    const teamsMap: Record<string, any[]> = {};
+    rows.forEach((row) => {
+      if (validateRow(row, mapping) !== "valid") return;
+      const teamName = (row[mapping["Team"] || ""] || "").trim();
+      const playerName = (row[mapping["Player Name"] || ""] || "").trim();
+      const displayName = (row[mapping["Display Name"] || ""] || "").trim() || playerName.toUpperCase();
+      const playerNumber = parseInt((row[mapping["Number"] || ""] || "").trim(), 10);
+      const playerType = (row[mapping["Type"] || ""] || "").trim() || "Current";
+      const playerGroup = (row[mapping["Group"] || ""] || "").trim() || "Football";
+      
+      if (!teamName || !playerName || isNaN(playerNumber)) return;
+      
+      if (!teamsMap[teamName]) {
+        teamsMap[teamName] = [];
+      }
+      teamsMap[teamName].push({
+        name: playerName,
+        display_name: displayName,
+        number: playerNumber,
+        type: playerType,
+        group: playerGroup
+      });
+    });
+
+    const payload = {
+      league: "NFL",
+      teams: Object.entries(teamsMap).map(([name, players]) => ({
+        name,
+        players
+      }))
+    };
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/database/import`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
+        },
+        body: JSON.stringify(payload)
+      });
+      
+      if (!res.ok) {
+        throw new Error(await res.text() || "Import failed");
+      }
+      
+      setImportDone(true);
+    } catch (err: any) {
+      console.error(err);
+      alert("Error importing players: " + (err.message || err));
+    } finally {
+      setImporting(false);
+    }
   };
 
   const reset = () => {

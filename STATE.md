@@ -1,8 +1,8 @@
 # STATE.md — JOTLayerRaid
 
-> **Current Phase**: Local Setup & Railway Integration
-> **Milestone**: v1.0 — Production Jersey Mockup Workspace
-> **Last Updated**: 2026-05-29
+> **Current Phase**: Cloudflare Serverless Architecture (v2.0)
+> **Milestone**: v2.0 — Live Serverless Production
+> **Last Updated**: 2026-07-15 4:45 PM
 
 ---
 
@@ -10,34 +10,37 @@
 
 | Feature / Module | Status | Notes |
 | :--- | :--- | :--- |
-| **Monorepo Structure** | ✅ Operational | Turborepo workspace with `apps/web`, `apps/api`, and shared configurations. |
-| **Interactive Canvas Editor**| ✅ Feature-Rich | Fabric.js editor in `apps/web` with custom block font loaders, alignment tools, layer ordering, and patch image overlay. |
-| **AI Layer separation** | ✅ Operational | Integrated with DashScope API supporting Qwen-Image-Layered to separate mockup layers. |
-| **Pillow Composite Engine** | ✅ Ready | Custom backend image overlay service to stitch text and patches onto transparent background templates. |
-| **Database & Cache** | ✅ Configured | Linked to local PostgreSQL / Docker Compose and production PostgreSQL on Railway. |
-| **Cloud Store Uploads** | ✅ Implemented | Supported WooCommerce REST API and ShopBase store managers for automated bulk uploading. |
-| **Background Processing** | 🟡 Testing | Celery + Redis configured in backend; local queue workers and Celery Beat scheduler set up. |
-| **Railway Cloud Hosting** | ✅ Connected | Linked to project `inspiring-endurance` (Project ID: `a4f5dd05-f7a2-426d-a2e2-29cf27830749`). |
+| **Monorepo Structure** | ✅ Operational | Turborepo workspace with `apps/web` (Pages) and `apps/api-worker` (Workers). |
+| **Interactive Canvas Editor**| ✅ Edge Compliant | Next.js 16 Edge runtime deployed to Cloudflare Pages. |
+| **Satori Layout Engine** | ✅ Operational | Replaced Pillow with Satori + resvg-wasm overlay renderer inside the Worker. |
+| **D1 Database Schema** | ✅ Migrated | Drizzle SQLite schema defined and applied. 15 tables fully migrated and running in D1. |
+| **Cloud Store Uploads** | ✅ Ported | WooCommerce, ShopBase, and Astro storefront sync written in TypeScript. |
+| **Background Processing** | ✅ Configured | Cloudflare Queues (`bulk-jersey-jobs`) handles bulk jersey render queues. |
+| **D1 Concurrency Control** | ✅ Operational | Implemented query batching (100 rows per transaction) to optimize D1 write limits. |
+| **Font Caching (KV)** | ✅ Operational | TTF/OTF font assets stored and fetched through `FONTS_CACHE_KV` namespace. |
+| **CRM Support & Webhooks** | ✅ Operational | Customer support tickets, replies, and inbound support email webhooks fully running on Hono. |
+| **Telegram Bot Alerting** | ✅ Active | Real-time Telegram alerts configured for new orders and support tickets. |
+| **Hosting & Cloud Deploy** | ✅ Live | Frontend on Cloudflare Pages; Backend API on Cloudflare Workers. |
+| **Supplier Excel Export** | ✅ Operational | Client-side ExcelJS spreadsheet generator with backend CORS-proxy and automated shipping status updates. |
 
 ---
 
-## ⚡ Active Configurations & Secrets Needed
+## ⚡ Active Connections & Live Resources
 
-Ensure the following environments are configured in your local `.env` and Railway Service Variables:
-
-### 1. Backend (`apps/api/.env`)
-* `DATABASE_URL` — PostgreSQL connection string.
-* `REDIS_URL` — Redis host/port string.
-* `QWEN_API_KEY` — Alibaba Cloud/DashScope API key for layer separation.
-* `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` — Cloudflare R2 credentials for mockup storage.
-
-### 2. Frontend (`apps/web/.env.local`)
-* `NEXT_PUBLIC_API_URL` — Point to backend (e.g. `http://localhost:8000` or `https://jot-layer-raid-production.up.railway.app`).
+| Service / Binding | Type | Resource ID / Name / URL |
+| :--- | :--- | :--- |
+| **`api-worker`** | Cloudflare Worker (Hono) | [https://api-worker.justoneteeteam.workers.dev](https://api-worker.justoneteeteam.workers.dev) |
+| **`web`** | Cloudflare Pages (Next.js) | [https://jot-layer-raid-web.pages.dev](https://jot-layer-raid-web.pages.dev) |
+| **`DB`** | Cloudflare D1 (SQLite) | `d4e061cb-72cc-49f6-9562-092a3cd4a27b` (jotlayerraid-db) |
+| **`FONTS_CACHE_KV`** | Workers KV Namespace | `f9d69ed778704bbea0b77e36ca454f8a` |
+| **`BULK_QUEUE`** | Cloudflare Queue | `bulk-jersey-jobs` |
+| **`BUCKET`** | Cloudflare R2 Bucket | `jot-layer-raid-bucket` |
+| **`Telegram Bot`** | Alert Channel | Bot: `8882930959` / Channel ID: `-1003926357837` (JOT OMS Notification) |
 
 ---
 
 ## 🎯 Active Goals
 
-1. **Verify Local Stack**: Spin up PostgreSQL + Redis locally using Docker, install all node modules via `pnpm install`, and launch the unified development server via `pnpm dev`.
-2. **Synchronize Schema**: Validate that Postgres tables are seeded with the default 32 NFL teams and the initial admin login (`admin`/`admin123`).
-3. **Run Production Builds**: Validate that Next.js client builds successfully using Turborepo before triggering continuous deployments on Railway.
+1. **Monitor Worker Traffic**: Track API requests through the Cloudflare Worker console.
+2. **Perform Load Testing**: Submit a bulk generation job of 100+ jerseys to verify the queue consumer throttling and D1 batch-transaction write speeds.
+3. **Weekly Sync Checks**: Monitor the Monday Cron trigger (`0 0 * * 1`) to ensure active WooCommerce and ShopBase storefront orders sync cleanly into D1.

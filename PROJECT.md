@@ -1,7 +1,7 @@
 # PROJECT.md — JOTLayerRaid
 
-> **Status**: Active / Connected to Railway
-> **Last Updated**: 2026-05-29
+> **Status**: Active / Connected to Cloudflare Serverless
+> **Last Updated**: 2026-07-15 4:45 PM
 > **Owner**: JOT (justoneteeteam@gmail.com)
 
 ---
@@ -12,7 +12,7 @@
 1. **Upload** a raw jersey mockup image.
 2. **Decompose** the nameplate and number layers into transparent, repositionable RGBA image layers via state-of-the-art **Qwen-Image-Layered** AI model.
 3. **Customize** layout configurations, custom block fonts, and sponsor/patch positions via an interactive **Fabric.js** editor.
-4. **Bulk Generate** thousands of individual player name/number variants using a high-performance **Pillow** image overlay engine.
+4. **Bulk Generate** thousands of individual player name/number variants using a high-performance **Satori + resvg-wasm** layout engine.
 5. **Publish** products automatically to WooCommerce and ShopBase stores with custom sizing tables, pricing structures, and dynamic SEO metadata.
 6. **Roster Scrape** roster rosters weekly from Yahoo Sports to keep player databases up to date with automated admin approvals.
 
@@ -22,32 +22,36 @@
 
 | Layer | Technology | Purpose / Notes |
 | :--- | :--- | :--- |
-| **Frontend** | Next.js 15 (App Router) | React dashboard, Fabric.js interactive canvas, real-time bulk job progress tracking. |
+| **Frontend** | Next.js 16 (Edge Runtime) | React dashboard, Fabric.js interactive canvas, hosted on **Cloudflare Pages** (`https://jot-layer-raid-web.pages.dev`). |
 | **UI Theme** | Shadcn UI & Radix | Clean, light-theme minimalist design system. |
-| **Backend** | FastAPI (Python 3.12) | REST API endpoints, WebSocket servers, image processing. |
-| **AI Processing** | Qwen-Image-Layered | Alibaba's diffusion model for decomposing raw mockups into layered RGBA elements. |
-| **Image Compositing** | Pillow (PIL) | Super-fast flat text and patch overlay rendering engine for bulk job outputs. |
-| **Database** | PostgreSQL / Supabase | Relational tables for teams, players, mockup templates, store configurations, and bulk jobs. |
-| **Job Queue** | Celery + Redis | Asynchronous workers for bulk image generation, R2 uploads, and store publishing. |
-| **Scheduler** | Celery Beat | Triggers weekly Yahoo Sports roster scraping jobs on Mondays. |
-| **File Storage** | Cloudflare R2 | Storage bucket for blank mockup layers, custom block fonts, branding patches, and generated product variants. |
+| **Backend** | Hono (TypeScript) | Light, ultra-fast backend framework running on **Cloudflare Workers** (`https://api-worker.justoneteeteam.workers.dev`). |
+| **AI Processing** | Qwen-Image-Layered | Alibaba's model for decomposing raw mockups into layered RGBA elements. |
+| **Image Compositing** | Satori + resvg-wasm | Serverless SVG rendering and WebAssembly PNG rasterization engine replacing heavy Python Pillow/Cairo libs. |
+| **Database** | Cloudflare D1 (SQLite) | Relational SQL database with Drizzle ORM managing teams, players, templates, syncs, and user sessions. |
+| **Job Queue** | Cloudflare Queues | Serverless message queuing (`bulk-jersey-jobs`) to scale out bulk layout rendering horizontally. |
+| **Cache (Fonts)** | Cloudflare KV | Namespace cache (`FONTS_CACHE_KV`) preventing R2 disk read overhead during font rendering. |
+| **Scheduler** | Cloudflare Cron Triggers | Triggers weekly WooCommerce, ShopBase, and Astro order syncs. |
+| **Notifications** | Telegram Bot API | Instant alerts for newly synced orders and customer support ticket events. |
+| **File Storage** | Cloudflare R2 | Storage bucket (`BUCKET`) for base layers, custom block fonts, sponsor patches, and generated jersey designs. |
 
 ---
 
-## ☁️ Railway Deployment & Live Environments
+## ☁️ Cloudflare Deployment & Live Environments
 
-The project is linked to the active Railway environment:
-* **Project ID**: `a4f5dd05-f7a2-426d-a2e2-29cf27830749`
-* **Project Name**: `inspiring-endurance`
+The project is deployed on Cloudflare:
+* **API Domain**: `https://api-worker.justoneteeteam.workers.dev`
+* **Web Domain**: `https://jot-layer-raid-web.pages.dev`
 
 ### Connected Resources
 
 | Service / Resource | Type | Live URL / Connection |
 | :--- | :--- | :--- |
-| **`jot-layer-raid`** | FastAPI Backend Service | [https://jot-layer-raid-production.up.railway.app](https://jot-layer-raid-production.up.railway.app) |
-| **`web`** | Next.js Web App Service | [https://product.justonetee.org](https://product.justonetee.org) |
-| **`Postgres`** | PostgreSQL Database | `https://postgres-production-e204.up.railway.app` |
-| **`Redis`** | Redis Broker & Cache | Internal Redis Volume |
+| **`api-worker`** | Worker (Hono Router) | `api-worker.justoneteeteam.workers.dev` |
+| **`web`** | Pages (Next.js Edge) | `jot-layer-raid-web.pages.dev` |
+| **`D1 Database`** | jotlayerraid-db | `d4e061cb-72cc-49f6-9562-092a3cd4a27b` |
+| **`KV Namespace`** | FONTS_CACHE_KV | `f9d69ed778704bbea0b77e36ca454f8a` |
+| **`R2 Bucket`** | BUCKET | `jot-layer-raid-bucket` |
+| **`Queues`** | BULK_QUEUE | `bulk-jersey-jobs` |
 
 ---
 
@@ -56,20 +60,25 @@ The project is linked to the active Railway environment:
 ```
 jot-layer-raid/
 ├── apps/
-│   ├── web/                          # Next.js 15
+│   ├── web/                          # Next.js 16 (Cloudflare Pages)
 │   │   ├── app/
 │   │   │   ├── (dashboard)/          # Dashboard landing, database, bulk configuration
 │   │   │   └── (editor)/mockups/...  # Fabric.js jersey mockup editor & layout builder
+│   │   ├── wrangler.jsonc            # Pages project config
 │   │   └── package.json
 │   │
-│   └── api/                          # FastAPI
-│       ├── main.py                   # App entrypoint
-│       ├── config.py                 # Env/Pydantic configurations
-│       ├── routers/                  # API routers (mockups, bulk, database, stores, OMS)
-│       └── services/                 # core logic (image_engine, r2_storage, auth)
+│   └── api-worker/                   # Hono (Cloudflare Workers)
+│       ├── src/
+│       │   ├── index.ts              # API entrypoint (GET/POST routes + Queue consumer + Cron handler)
+│       │   ├── db/
+│       │   │   └── schema.ts         # Drizzle SQLite Schema mappings
+│       │   ├── services/             # Core logic (image-engine, r2-storage, oms-sync)
+│       │   └── types.ts              # Worker environment bindings types
+│       ├── drizzle/                  # Schema Migrations
+│       ├── wrangler.jsonc            # Worker project bindings & Cron triggers
+│       └── package.json
 │
-├── Dockerfile.api                    # FastAPI production build file
-├── Dockerfile.web                    # Next.js production build file
 ├── package.json                      # Monorepo packages root
-└── pnpm-workspace.yaml               # Monorepo workspace config
+├── pnpm-workspace.yaml               # Monorepo workspace config
+└── turbo.json                        # Turborepo task runner
 ```

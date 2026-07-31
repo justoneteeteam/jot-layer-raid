@@ -12,8 +12,11 @@ import {
   fetchTemplates, 
   fetchPlayers, 
   fetchFonts, 
-  fetchPatches, 
-  fetchStores 
+  fetchPatches,
+  fetchStores,
+  BulkJob,
+  fetchBulkJobs,
+  deleteBulkJob
 } from "../../lib/api";
 
 const WIZARD_STEPS = [
@@ -36,6 +39,33 @@ export default function BulkPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
+
+  const [selectedJobDetails, setSelectedJobDetails] = useState<any>(null);
+  const [showDetailsModal, setShowDetailsModal] = useState(false);
+  const [loadingDetails, setLoadingDetails] = useState(false);
+
+  const handleViewDetails = async (jobId: number) => {
+    setLoadingDetails(true);
+    setShowDetailsModal(true);
+    try {
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const token = localStorage.getItem("token");
+      const res = await fetch(`${API_BASE}/api/bulk/jobs/${jobId}`, {
+        headers: {
+          ...(token ? { "Authorization": `Bearer ${token}` } : {})
+        }
+      });
+      if (!res.ok) throw new Error("Failed to load job details");
+      const data = await res.json();
+      setSelectedJobDetails(data);
+    } catch (err) {
+      console.error(err);
+      alert("Error loading job details");
+      setShowDetailsModal(false);
+    } finally {
+      setLoadingDetails(false);
+    }
+  };
 
   // Data from API
   const [teams, setTeams] = useState<Team[]>([]);
@@ -92,23 +122,22 @@ export default function BulkPage() {
   const [seoCategory, setSeoCategory] = useState("Jerseys");
   const [seoTags, setSeoTags] = useState("Jersey, {team_name}, {player_name}");
 
-  const mockJobs = [
-    { id: 1, name: "Eagles Full Roster 2026", team: "Philadelphia Eagles", template: "Eagles Home Green", status: "completed", total: 53, done: 53, created: "2026-05-08" },
-    { id: 2, name: "Cowboys Legends Pack", team: "Dallas Cowboys", template: "Cowboys Away White", status: "running", total: 30, done: 18, created: "2026-05-10" },
-  ];
+  const [jobs, setJobs] = useState<BulkJob[]>([]);
 
-  // Load initial data (Teams, Templates, Patches, Stores)
+  // Load initial data (Teams, Templates, Patches, Stores, Jobs)
   useEffect(() => {
     Promise.all([
       fetchTeams(),
       fetchTemplates(),
       fetchPatches(),
-      fetchStores().catch(() => [])
-    ]).then(([teamsData, templatesData, patchesData, storesData]) => {
+      fetchStores().catch(() => []),
+      fetchBulkJobs().catch(() => [])
+    ]).then(([teamsData, templatesData, patchesData, storesData, jobsData]) => {
       setTeams(teamsData);
       setTemplates(templatesData);
       setPatches(patchesData);
       setStores(storesData);
+      setJobs(jobsData);
       
       // Auto select first store if available
       const firstStore = storesData[0];
@@ -257,22 +286,22 @@ export default function BulkPage() {
         <div className="stat-card">
           <div className="stat-icon">📋</div>
           <div className="stat-label">Total Jobs</div>
-          <div className="stat-value">2</div>
+          <div className="stat-value">{jobs.length}</div>
         </div>
         <div className="stat-card">
           <div className="stat-icon">✅</div>
           <div className="stat-label">Completed</div>
-          <div className="stat-value">1</div>
+          <div className="stat-value">{jobs.filter(j => j.status === "completed").length}</div>
         </div>
         <div className="stat-card">
           <div className="stat-icon">⏳</div>
-          <div className="stat-label">Running</div>
-          <div className="stat-value">1</div>
+          <div className="stat-label">Running/Queued</div>
+          <div className="stat-value">{jobs.filter(j => j.status === "running" || j.status === "pending").length}</div>
         </div>
         <div className="stat-card">
           <div className="stat-icon">🖼️</div>
           <div className="stat-label">Images Generated</div>
-          <div className="stat-value">71</div>
+          <div className="stat-value">{jobs.reduce((acc, j) => acc + (j.done || 0), 0)}</div>
         </div>
       </div>
 
@@ -298,7 +327,7 @@ export default function BulkPage() {
               </tr>
             </thead>
             <tbody>
-              {mockJobs.map(job => (
+              {jobs.map(job => (
                 <tr key={job.id}>
                   <td style={{ fontWeight: 500 }}>{job.name}</td>
                   <td>{job.team}</td>
@@ -307,10 +336,10 @@ export default function BulkPage() {
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <div style={{ flex: 1, height: 6, borderRadius: 999, background: "var(--bg-tertiary)", overflow: "hidden" }}>
                         <div style={{
-                          width: `${(job.done / job.total) * 100}%`,
+                          width: `${job.total > 0 ? (job.done / job.total) * 100 : 0}%`,
                           height: "100%",
                           borderRadius: 999,
-                          background: job.status === "completed" ? "var(--success)" : "var(--accent)",
+                          background: job.status === "completed" ? "var(--success)" : job.status === "failed" ? "var(--error)" : "var(--accent)",
                           transition: "width 300ms ease"
                         }} />
                       </div>
@@ -318,14 +347,23 @@ export default function BulkPage() {
                     </div>
                   </td>
                   <td>
-                    <span className={`badge ${job.status === "completed" ? "badge-success" : job.status === "running" ? "badge-info" : "badge-warning"}`}>
-                      {job.status === "running" ? "⏳ Running" : job.status === "completed" ? "✅ Done" : "🕐 Queued"}
+                    <span className={`badge ${job.status === "completed" ? "badge-success" : job.status === "failed" ? "badge-danger" : job.status === "running" ? "badge-info" : "badge-warning"}`}>
+                      {job.status === "running" ? "⏳ Running" : job.status === "completed" ? "✅ Done" : job.status === "failed" ? "❌ Failed" : "🕐 Queued"}
                     </span>
                   </td>
                   <td style={{ fontSize: 13, color: "var(--text-secondary)" }}>{job.created}</td>
                   <td>
-                    <button className="btn btn-ghost">👁️</button>
-                    <button className="btn btn-ghost">🗑️</button>
+                    <button className="btn btn-ghost" title="View details" onClick={() => handleViewDetails(job.id)}>👁️</button>
+                    <button className="btn btn-ghost" title="Delete job" onClick={async () => {
+                      if (confirm("Are you sure you want to delete this bulk job?")) {
+                        try {
+                          await deleteBulkJob(job.id);
+                          setJobs(prev => prev.filter(j => j.id !== job.id));
+                        } catch (err) {
+                          alert("Failed to delete job");
+                        }
+                      }
+                    }}>🗑️</button>
                   </td>
                 </tr>
               ))}
@@ -874,6 +912,128 @@ export default function BulkPage() {
               >
                 {wizardStep === WIZARD_STEPS.length ? (submitting ? "⏳ Starting..." : "🚀 Start Bulk Job") : "Next →"}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Bulk Job Details Modal ── */}
+      {showDetailsModal && (
+        <div style={{
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 100,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }} onClick={() => setShowDetailsModal(false)}>
+          <div style={{
+            background: "var(--bg-primary)", borderRadius: 12, width: 750,
+            maxHeight: "85vh", overflow: "hidden", boxShadow: "var(--shadow-lg)",
+            display: "flex", flexDirection: "column",
+          }} onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div style={{ padding: "20px 24px", borderBottom: "1px solid var(--border-default)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ fontSize: 18, fontWeight: 600 }}>
+                📊 Bulk Job Details {selectedJobDetails ? `#${selectedJobDetails.id}` : ""}
+              </div>
+              <button className="upload-modal-close" onClick={() => setShowDetailsModal(false)} style={{ border: "none", background: "none", cursor: "pointer", fontSize: 16 }}>✕</button>
+            </div>
+
+            {/* Body */}
+            <div style={{ padding: 24, overflowY: "auto", flex: 1 }}>
+              {loadingDetails ? (
+                <div style={{ textAlign: "center", padding: 48, color: "var(--text-secondary)" }}>
+                  ⏳ Loading job details...
+                </div>
+              ) : selectedJobDetails ? (
+                <div>
+                  {/* Summary Box */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 24, padding: 16, backgroundColor: "var(--bg-secondary)", borderRadius: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>Status</div>
+                      <div style={{ fontWeight: 600, textTransform: "capitalize", display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                        {selectedJobDetails.status === "completed" ? "✅ Completed" : selectedJobDetails.status === "failed" ? "❌ Failed" : "⏳ Running"}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>Progress</div>
+                      <div style={{ fontWeight: 600, marginTop: 4 }}>
+                        {selectedJobDetails.completed_items} / {selectedJobDetails.total_items} Generated
+                      </div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>Failed Items</div>
+                      <div style={{ fontWeight: 600, color: selectedJobDetails.failed_items > 0 ? "var(--error)" : "inherit", marginTop: 4 }}>
+                        {selectedJobDetails.failed_items} Failures
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Items List */}
+                  <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Generated Mockups & Links</h4>
+                  {selectedJobDetails.items?.length === 0 ? (
+                    <div style={{ padding: 16, textAlign: "center", color: "var(--text-muted)", border: "1px dashed var(--border-default)", borderRadius: 8 }}>
+                      No items found in this job.
+                    </div>
+                  ) : (
+                    <div className="table-wrapper" style={{ maxHeight: 350, overflowY: "auto" }}>
+                      <table style={{ minWidth: "100%" }}>
+                        <thead>
+                          <tr>
+                            <th>Player Name</th>
+                            <th>Gender</th>
+                            <th>Status</th>
+                            <th>Jersey Output Image</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {selectedJobDetails.items.map((item: any) => (
+                            <tr key={item.id}>
+                              <td style={{ fontWeight: 500 }}>{item.player_name}</td>
+                              <td>{item.gender}</td>
+                              <td>
+                                <span className={`badge ${item.status === "done" ? "badge-success" : item.status === "failed" ? "badge-danger" : "badge-warning"}`}>
+                                  {item.status === "done" ? "Done" : item.status === "failed" ? "Failed" : "Queued"}
+                                </span>
+                              </td>
+                              <td>
+                                {item.status === "done" && item.generated_image_url ? (
+                                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                                    <img 
+                                      src={item.generated_image_url} 
+                                      alt={item.player_name} 
+                                      style={{ width: 40, height: 50, objectFit: "contain", borderRadius: 4, border: "1px solid var(--border-default)" }} 
+                                    />
+                                    <a 
+                                      href={item.generated_image_url} 
+                                      target="_blank" 
+                                      rel="noreferrer"
+                                      className="btn btn-ghost"
+                                      style={{ fontSize: 12, padding: "2px 8px", textDecoration: "none", color: "var(--accent)" }}
+                                    >
+                                      🔗 Open Image URL
+                                    </a>
+                                  </div>
+                                ) : item.status === "failed" ? (
+                                  <span style={{ color: "var(--error)", fontSize: 12 }} title={item.error_message}>
+                                    ⚠️ {item.error_message || "Generation failed"}
+                                  </span>
+                                ) : (
+                                  <span style={{ color: "var(--text-muted)", fontSize: 12 }}>Processing...</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div style={{ textAlign: "center", padding: 24 }}>Failed to load job.</div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div style={{ padding: "16px 24px", borderTop: "1px solid var(--border-default)", display: "flex", justifyContent: "flex-end" }}>
+              <button className="btn btn-secondary" onClick={() => setShowDetailsModal(false)}>Close</button>
             </div>
           </div>
         </div>

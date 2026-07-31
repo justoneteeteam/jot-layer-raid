@@ -202,7 +202,7 @@ def send_tracking_number_email(order: Order, db: Session):
         from config import settings
         frontend_url = settings.FRONTEND_URL
         if not frontend_url or "localhost" in frontend_url or "127.0.0.1" in frontend_url:
-            frontend_url = "https://product.justonetee.org"
+            frontend_url = "https://jot-layer-raid-web.pages.dev"
         logo_url = f"{frontend_url}/logo-vulius.png"
         
         header_html = f"""<!-- Premium Branded Logo Header -->
@@ -1651,7 +1651,7 @@ def inbound_support_email_webhook(
             f"<b>From:</b> {escaped_name} ({escaped_email})\n"
             f"<b>Subject:</b> {escaped_subject}\n\n"
             f"<blockquote>{escaped_snippet}</blockquote>\n\n"
-            f"👉 <a href=\"https://product.justonetee.org/oms/tickets\">Open Support Dashboard</a>"
+            f"👉 <a href=\"https://jot-layer-raid-web.pages.dev/oms/tickets\">Open Support Dashboard</a>"
         )
         
         if background_tasks:
@@ -1696,7 +1696,7 @@ def inbound_support_email_webhook(
             f"<b>From:</b> {escaped_name} ({escaped_email})\n"
             f"<b>Subject:</b> {escaped_subject}\n\n"
             f"<blockquote>{escaped_snippet}</blockquote>\n\n"
-            f"👉 <a href=\"https://product.justonetee.org/oms/tickets\">Open Support Dashboard</a>"
+            f"👉 <a href=\"https://jot-layer-raid-web.pages.dev/oms/tickets\">Open Support Dashboard</a>"
         )
         
         if background_tasks:
@@ -1896,7 +1896,7 @@ def woocommerce_order_created_webhook(
         from config import settings
         frontend_url = settings.FRONTEND_URL
         if not frontend_url or "localhost" in frontend_url or "127.0.0.1" in frontend_url:
-            frontend_url = "https://product.justonetee.org"
+            frontend_url = "https://jot-layer-raid-web.pages.dev"
         logo_url = f"{frontend_url}/logo-vulius.png"
         
         # Dynamic Header using the official high-resolution logo image hosted on the frontend
@@ -2238,7 +2238,7 @@ def woocommerce_order_created_webhook(
             f"<b>Total Revenue:</b> ${escaped_total}\n\n"
             f"<b>Purchased Items:</b>\n"
             f"{telegram_items_str}\n\n"
-            f"👉 <a href=\"https://product.justonetee.org/oms\">Open Logistics Dashboard</a>"
+            f"👉 <a href=\"https://jot-layer-raid-web.pages.dev/oms\">Open Logistics Dashboard</a>"
         )
 
         if background_tasks:

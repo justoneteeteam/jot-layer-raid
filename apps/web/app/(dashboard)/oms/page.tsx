@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
+import ExcelJS from "exceljs";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
@@ -469,6 +470,36 @@ export default function OrdersPage() {
     }
   };
 
+  const fetchImageAsBase64 = async (url: string): Promise<{ base64: string; extension: string } | null> => {
+    try {
+      const proxyUrl = `${API_BASE}/api/oms/proxy-image?url=${encodeURIComponent(url)}`;
+      const res = await fetch(proxyUrl);
+      if (!res.ok) return null;
+      const blob = await res.blob();
+      
+      let extension = 'png';
+      if (blob.type.includes('jpeg') || blob.type.includes('jpg')) {
+        extension = 'jpeg';
+      } else if (blob.type.includes('gif')) {
+        extension = 'gif';
+      }
+      
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64data = reader.result as string;
+          const base64 = base64data.split(',')[1] || '';
+          resolve({ base64, extension });
+        };
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch (err) {
+      console.error("Failed to fetch image for Excel:", err);
+      return null;
+    }
+  };
+
   // Export selected orders to Excel resolving item database IDs
   const handleExportExcel = async () => {
     if (selectedOrderIds.length === 0) {
@@ -477,16 +508,216 @@ export default function OrdersPage() {
     }
     setExporting(true);
     try {
-      const selectedDbIds: number[] = [];
-      groupedOrders.forEach((o) => {
-        if (selectedOrderIds.includes(o.order_id)) {
-          o.items.forEach((item) => selectedDbIds.push(item.id));
-        }
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet("Suppliers");
+
+      // Define columns
+      worksheet.columns = [
+        { header: "ID", key: "id", width: 18 },
+        { header: "PRODUCT NAME", key: "product_name", width: 35 },
+        { header: "Option", key: "option", width: 30 },
+        { header: "Qty", key: "qty", width: 8 },
+        { header: "SHIPPING ADDRESS", key: "shipping_address", width: 40 },
+        { header: "PHOTO", key: "photo", width: 16 },
+        { header: "Production fee", key: "production_fee", width: 15 },
+        { header: "Note", key: "note", width: 15 },
+        { header: "Service charge", key: "service_charge", width: 15 },
+        { header: "Total", key: "total", width: 15 }
+      ];
+
+      // Format headers (row 1)
+      const headerRow = worksheet.getRow(1);
+      headerRow.height = 28;
+      headerRow.eachCell((cell) => {
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFFF00' } // Bright yellow
+        };
+        cell.font = {
+          name: 'Arial',
+          size: 11,
+          bold: true
+        };
+        cell.alignment = {
+          horizontal: 'center',
+          vertical: 'middle',
+          wrapText: true
+        };
+        cell.border = {
+          top: { style: 'thin', color: { argb: 'CCCCCC' } },
+          left: { style: 'thin', color: { argb: 'CCCCCC' } },
+          bottom: { style: 'thin', color: { argb: 'CCCCCC' } },
+          right: { style: 'thin', color: { argb: 'CCCCCC' } }
+        };
       });
 
-      const idsStr = selectedDbIds.join(",");
-      const url = `${API_BASE}/api/oms/export?ids=${idsStr}`;
-      window.open(url, "_blank");
+      const selectedOrders = groupedOrders.filter(o => selectedOrderIds.includes(o.order_id));
+      let currentRowIdx = 2;
+
+      for (const order of selectedOrders) {
+        const storeLetter = order.store_id ? order.store_id.charAt(0).toUpperCase() : "";
+        const rawOrderId = order.order_id.replace("#", "").trim();
+        const formattedOrderId = ` #${storeLetter}${rawOrderId}`;
+
+        const shippingAddress = `Receiver: ${order.customer_name}\n${order.customer_address}`;
+
+        for (const item of order.items) {
+          let customName = "";
+          let customNumber = "";
+          let sizeVal = "";
+          let genderVal = "";
+
+          // 1. Try to extract Custom Name & Number from database variant
+          if (item.variant) {
+            const numMatch = item.variant.match(/Custom\s*(?:Your\s*)?Number:\s*(.*)/i);
+            if (numMatch) {
+              customNumber = numMatch[1]!.trim();
+            }
+            const nameMatch = item.variant.match(/Custom\s*(?:Your\s*)?Name:\s*(.*)/i);
+            if (nameMatch) {
+              customName = nameMatch[1]!.trim();
+            }
+          }
+
+          // 2. Try to extract from product_name as fallback if custom name/number not found
+          if (!customName || !customNumber) {
+            const nameNumberMatch = item.product_name.match(/-\s*([A-Za-z0-9\s#]+)\s*#([0-9]+)/);
+            if (nameNumberMatch) {
+              if (!customName) customName = nameNumberMatch[1]!.trim();
+              if (!customNumber) customNumber = nameNumberMatch[2]!.trim();
+            } else {
+              // Fallback for simple "- Name #39" pattern or similar without hyphen
+              const fallbackMatch = item.product_name.match(/-\s*([A-Za-z0-9\s]+)\s+#([0-9]+)/);
+              if (fallbackMatch) {
+                if (!customName) customName = fallbackMatch[1]!.trim();
+                if (!customNumber) customNumber = fallbackMatch[2]!.trim();
+              }
+            }
+          }
+
+          // 3. Extract Size
+          sizeVal = (item.variant_value || "").trim();
+          if (!sizeVal) {
+            const sizeMatch = item.product_name.match(/\(Size\s*([^)]+)\)/i);
+            if (sizeMatch) {
+              sizeVal = sizeMatch[1]!.trim();
+            }
+          }
+
+          // 4. Extract Gender
+          const productTitleLower = item.product_name.toLowerCase();
+          if (productTitleLower.includes("women")) {
+            genderVal = "Women";
+          } else if (productTitleLower.includes("men")) {
+            genderVal = "Men";
+          } else if (productTitleLower.includes("youth")) {
+            genderVal = "Youth";
+          } else if (productTitleLower.includes("kids") || productTitleLower.includes("kid")) {
+            genderVal = "Youth";
+          }
+
+          // Build Option block line by line
+          const optionLines: string[] = [];
+          if (customName) {
+            optionLines.push(`Custom Name: ${customName}`);
+          }
+          if (customNumber) {
+            optionLines.push(`Custom Number: ${customNumber}`);
+          }
+          if (sizeVal) {
+            optionLines.push(`(Size ${sizeVal})`);
+          }
+          if (genderVal) {
+            optionLines.push(`Gender: ${genderVal}`);
+          }
+
+          const optionVal = optionLines.join("\n");
+
+          // Add row to sheet
+          const row = worksheet.addRow({
+            id: formattedOrderId,
+            product_name: item.product_name,
+            option: optionVal,
+            qty: item.quantity,
+            shipping_address: shippingAddress,
+            photo: "",
+            production_fee: "",
+            note: "",
+            service_charge: "",
+            total: ""
+          });
+
+          // Set row height to fit the 75x75 thumbnail
+          row.height = 85;
+
+          // Align and style row cells
+          row.eachCell((cell, colNumber) => {
+            cell.font = { name: 'Arial', size: 10 };
+            cell.border = {
+              top: { style: 'thin', color: { argb: 'CCCCCC' } },
+              left: { style: 'thin', color: { argb: 'CCCCCC' } },
+              bottom: { style: 'thin', color: { argb: 'CCCCCC' } },
+              right: { style: 'thin', color: { argb: 'CCCCCC' } }
+            };
+            
+            if (colNumber === 1 || colNumber === 4 || colNumber === 6) {
+              cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+            } else {
+              cell.alignment = { horizontal: 'left', vertical: 'middle', wrapText: true };
+            }
+          });
+
+          // Fetch and embed image if present
+          if (item.product_image) {
+            const imgData = await fetchImageAsBase64(item.product_image);
+            if (imgData) {
+              try {
+                const imageId = workbook.addImage({
+                  base64: imgData.base64,
+                  extension: imgData.extension as any
+                });
+                
+                worksheet.addImage(imageId, {
+                  tl: { col: 5, row: currentRowIdx - 1, xOffset: 20, yOffset: 10 } as any,
+                  ext: { width: 75, height: 75 }
+                });
+              } catch (imgErr) {
+                console.error("Error embedding image inside cell F:", imgErr);
+              }
+            }
+          }
+
+          currentRowIdx++;
+        }
+
+        // Update order status on backend
+        try {
+          await fetch(`${API_BASE}/api/oms/orders/${order.order_id}/update`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              shipping_status: "placed order"
+            })
+          });
+        } catch (err) {
+          console.error(`Failed to update status for order ${order.order_id}:`, err);
+        }
+      }
+
+      // Write workbook and download
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `${new Date().toLocaleDateString('en-GB').replace(/\//g, '-')}_Supplier_export.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      setSelectedOrderIds([]);
+      loadOrders();
     } catch (err) {
       console.error(err);
       alert("Error generating supplier spreadsheet.");
