@@ -778,200 +778,106 @@ app.post("/api/oms/sync", async (c) => {
   return c.json(result);
 });
 
-// Universal Order Webhook Receiver Helper
-async function processGenericOrderWebhook(c: any, platformName: string) {
+// Webhook Receiver Helper for Astro Storefront
+async function processAstroOrderWebhook(c: any) {
   const db = drizzle(c.env.DB);
   let body: any = null;
   try {
     body = await c.req.json();
   } catch (_) {}
 
-  if (body) {
-    // 1. ShopBase webhook format
-    if (body.line_items && (body.name || body.order_number)) {
-      const mappedOrderId = body.name || `#${body.order_number}`;
-      const shipping = body.shipping_address || body.billing_address || {};
-      const addressParts = [
-        shipping.address1,
-        shipping.address2,
-        shipping.city,
-        shipping.province,
-        shipping.zip,
-        shipping.country
-      ].filter(Boolean);
-      const customerAddress = addressParts.join(", ") || "No Address Provided";
-      const customerName = shipping.name || `${body.customer?.first_name || ""} ${body.customer?.last_name || ""}`.trim() || "Customer";
-      const customerEmail = body.email || body.customer?.email || "";
+  if (body && (body.order_id || body.id || body.customer_name || body.product_name)) {
+    const storeId = body.store_id || body.storeId || "Vulius";
+    const orderId = String(body.order_id || body.id || body.orderId || `VUL-${Date.now()}`);
+    const orderName = String(body.order_name || body.orderName || orderId);
+    const customerName = body.customer_name || body.customerName || "Customer";
+    const customerAddress = body.customer_address || body.customerAddress || "No Address Provided";
+    const customerEmail = body.customer_email || body.customerEmail || "";
+    const productName = body.product_name || body.productName || "Vulius Custom Jersey";
+    const productImage = body.product_image || body.productImage || "";
+    const quantity = parseInt(body.quantity || "1", 10);
+    const variant = body.variant || "";
+    const variantValue = body.variant_value || body.variantValue || "";
+    const revenue = parseFloat(body.revenue || "89.99");
+    const cost = parseFloat(body.cost || "22.00");
+    const shippingStatus = body.shipping_status || body.shippingStatus || "placed";
+    const trackingNumber = body.tracking_number || body.trackingNumber || "";
 
-      let count = 0;
-      for (const item of body.line_items || []) {
-        const productName = item.name || item.title || "Jersey Mockup";
-        const variantName = item.variant_title || "";
-        let shipStatus = body.fulfillment_status === "fulfilled" ? "in transit" : "placed";
+    const existing = await db.select()
+      .from(orders)
+      .where(and(eq(orders.orderId, orderId), eq(orders.productName, productName)))
+      .limit(1);
 
-        const existing = await db.select()
-          .from(orders)
-          .where(and(eq(orders.orderId, mappedOrderId), eq(orders.productName, productName)))
-          .limit(1);
+    if (existing.length === 0) {
+      const inserted = await db.insert(orders).values({
+        storeId,
+        orderId,
+        orderName,
+        customerName,
+        customerAddress,
+        customerEmail,
+        productName,
+        productImage,
+        quantity,
+        variant,
+        variantValue,
+        revenue,
+        cost,
+        shippingStatus,
+        trackingNumber,
+        emailSent: false,
+        trackingEmailSent: false,
+        createdAt: body.created_at || new Date().toISOString(),
+        syncedAt: new Date().toISOString()
+      }).returning();
 
-        if (existing.length === 0) {
-          await db.insert(orders).values({
-            storeId: "Wairaiders ShopBase",
-            orderId: mappedOrderId,
-            orderName: String(body.order_number || mappedOrderId),
-            customerName,
-            customerAddress,
-            customerEmail,
-            productName,
-            productImage: item.image || "",
-            quantity: item.quantity || 1,
-            variant: variantName,
-            variantValue: variantName,
-            revenue: parseFloat(body.total_price || "0"),
-            cost: parseFloat(item.price || "0") * 0.4,
-            shippingStatus: shipStatus,
-            trackingNumber: body.fulfillments?.[0]?.tracking_number || null,
-            createdAt: body.created_at || new Date().toISOString(),
-            syncedAt: new Date().toISOString()
+      if (productName) {
+        try {
+          await db.insert(syncedProducts).values({
+            name: productName,
+            platformProductId: body.product_id || body.productId || `prod_${Date.now()}`,
+            platform: "astro",
+            imageUrl: productImage,
+            price: revenue,
+            sku: body.sku || body.product_slug || "AST-SKU",
+            createdAt: new Date().toISOString()
           });
-          count++;
-        }
+        } catch (_) {}
       }
-      return c.json({ status: "ok", message: `ShopBase webhook processed. ${count} item(s) saved.`, order_id: mappedOrderId });
-    }
 
-    // 2. WooCommerce webhook format
-    if (body.line_items && body.id && (body.billing || body.shipping)) {
-      const mappedOrderId = `WOC ${body.id}`;
-      const shipping = body.shipping || body.billing || {};
-      const addressParts = [
-        shipping.address_1,
-        shipping.address_2,
-        shipping.city,
-        shipping.state,
-        shipping.postcode,
-        shipping.country
-      ].filter(Boolean);
-      const customerAddress = addressParts.join(", ") || "No Address Provided";
-      const customerName = `${shipping.first_name || ""} ${shipping.last_name || ""}`.trim() || "Customer";
-      const customerEmail = body.billing?.email || "";
-
-      let count = 0;
-      for (const item of body.line_items || []) {
-        const productName = item.name || "Jersey Mockup";
-        const variantName = item.meta_data?.map((m: any) => m.value).join(", ") || "";
-        let shipStatus = body.status === "completed" ? "delivered" : body.status === "processing" ? "in transit" : "placed";
-
-        const existing = await db.select()
-          .from(orders)
-          .where(and(eq(orders.orderId, mappedOrderId), eq(orders.productName, productName)))
-          .limit(1);
-
-        if (existing.length === 0) {
-          await db.insert(orders).values({
-            storeId: "WooCommerce Store",
-            orderId: mappedOrderId,
-            orderName: String(body.number || body.id),
-            customerName,
-            customerAddress,
-            customerEmail,
-            productName,
-            productImage: item.image?.src || "",
-            quantity: item.quantity || 1,
-            variant: variantName,
-            variantValue: item.meta_data?.[0]?.value || "",
-            revenue: parseFloat(body.total || "0"),
-            cost: parseFloat(item.subtotal || "0") * 0.4,
-            shippingStatus: shipStatus,
-            trackingNumber: null,
-            createdAt: body.date_created || new Date().toISOString(),
-            syncedAt: new Date().toISOString()
-          });
-          count++;
-        }
-      }
-      return c.json({ status: "ok", message: `WooCommerce webhook processed. ${count} item(s) saved.`, order_id: mappedOrderId });
-    }
-
-    // 3. Generic / Astro / Custom format
-    if (body.order_id || body.id || body.customer_name || body.product_name) {
-      const storeId = body.store_id || body.storeId || (platformName === "shopbase" ? "ShopBase Store" : platformName === "woocommerce" ? "WooCommerce Store" : "Vulius");
-      const orderId = String(body.order_id || body.id || body.orderId || `ORD-${Date.now()}`);
-      const orderName = String(body.order_name || body.orderName || orderId);
-      const customerName = body.customer_name || body.customerName || "Customer";
-      const customerAddress = body.customer_address || body.customerAddress || "No Address Provided";
-      const customerEmail = body.customer_email || body.customerEmail || "";
-      const productName = body.product_name || body.productName || "Custom Jersey";
-      const productImage = body.product_image || body.productImage || "";
-      const quantity = parseInt(body.quantity || "1", 10);
-      const variant = body.variant || "";
-      const variantValue = body.variant_value || body.variantValue || "";
-      const revenue = parseFloat(body.revenue || "89.99");
-      const cost = parseFloat(body.cost || "22.00");
-      const shippingStatus = body.shipping_status || body.shippingStatus || "placed";
-      const trackingNumber = body.tracking_number || body.trackingNumber || "";
-
-      const existing = await db.select()
-        .from(orders)
-        .where(and(eq(orders.orderId, orderId), eq(orders.productName, productName)))
-        .limit(1);
-
-      if (existing.length === 0) {
-        const inserted = await db.insert(orders).values({
-          storeId,
-          orderId,
-          orderName,
-          customerName,
-          customerAddress,
-          customerEmail,
-          productName,
-          productImage,
-          quantity,
-          variant,
-          variantValue,
-          revenue,
-          cost,
-          shippingStatus,
-          trackingNumber,
-          emailSent: false,
-          trackingEmailSent: false,
-          createdAt: body.created_at || new Date().toISOString(),
-          syncedAt: new Date().toISOString()
-        }).returning();
-
-        if (productName) {
-          try {
-            await db.insert(syncedProducts).values({
-              name: productName,
-              platformProductId: body.product_id || body.productId || `prod_${Date.now()}`,
-              platform: platformName,
-              imageUrl: productImage,
-              price: revenue,
-              sku: body.sku || body.product_slug || "JERSEY-SKU",
-              createdAt: new Date().toISOString()
-            });
-          } catch (_) {}
-        }
-
-        return c.json({ status: "ok", message: `${platformName} order received and stored.`, order: mapOrderToSnakeCase(inserted[0]) });
-      } else {
-        return c.json({ status: "ok", message: `${platformName} order already exists.`, order_id: orderId });
-      }
+      return c.json({ status: "ok", message: "Astro order received and stored.", order: mapOrderToSnakeCase(inserted[0]) });
+    } else {
+      return c.json({ status: "ok", message: "Astro order already exists.", order_id: orderId });
     }
   }
 
-  c.executionCtx.waitUntil(syncOrders(c.env, platformName));
-  return c.json({ status: "ok", message: `${platformName} sync triggered in background.` });
+  c.executionCtx.waitUntil(syncOrders(c.env, "astro"));
+  return c.json({ status: "ok", message: "Astro sync triggered in background." });
 }
 
 // Order Created Webhook Receivers
-app.post("/api/oms/webhook/woocommerce", async (c) => processGenericOrderWebhook(c, "woocommerce"));
-app.post("/api/oms/webhook/woocommerce/order-created", async (c) => processGenericOrderWebhook(c, "woocommerce"));
-app.post("/api/oms/webhook/astro", async (c) => processGenericOrderWebhook(c, "astro"));
-app.post("/api/oms/webhook/astro/order-created", async (c) => processGenericOrderWebhook(c, "astro"));
-app.post("/api/oms/webhook/shopbase", async (c) => processGenericOrderWebhook(c, "shopbase"));
-app.post("/api/oms/webhook/shopbase/order-created", async (c) => processGenericOrderWebhook(c, "shopbase"));
-app.post("/api/oms/webhook/order-created", async (c) => processGenericOrderWebhook(c, "generic"));
+app.post("/api/oms/webhook/woocommerce", async (c) => {
+  c.executionCtx.waitUntil(syncOrders(c.env, "woocommerce"));
+  return c.json({ status: "ok", message: "WooCommerce sync triggered instantly." });
+});
+
+app.post("/api/oms/webhook/woocommerce/order-created", async (c) => {
+  c.executionCtx.waitUntil(syncOrders(c.env, "woocommerce"));
+  return c.json({ status: "ok", message: "WooCommerce sync triggered instantly." });
+});
+
+app.post("/api/oms/webhook/shopbase", async (c) => {
+  c.executionCtx.waitUntil(syncOrders(c.env, "shopbase"));
+  return c.json({ status: "ok", message: "ShopBase sync triggered instantly." });
+});
+
+app.post("/api/oms/webhook/shopbase/order-created", async (c) => {
+  c.executionCtx.waitUntil(syncOrders(c.env, "shopbase"));
+  return c.json({ status: "ok", message: "ShopBase sync triggered instantly." });
+});
+
+app.post("/api/oms/webhook/astro", async (c) => processAstroOrderWebhook(c));
+app.post("/api/oms/webhook/astro/order-created", async (c) => processAstroOrderWebhook(c));
 
 // ── Order Management Routes ──────────────────────────────────────────────────
 
