@@ -1110,6 +1110,8 @@ app.put("/api/oms/orders/:order_id/update", async (c) => {
     if (customerName !== undefined) updates.customerName = customerName;
     if (customerAddress !== undefined) updates.customerAddress = customerAddress;
     if (customerEmail !== undefined) updates.customerEmail = customerEmail;
+    if (body.variant !== undefined) updates.variant = body.variant;
+    if (body.variant_value !== undefined) updates.variantValue = body.variant_value;
 
     // Send email logic if tracking number updated
     if (trackingNumber && trackingNumber !== oldTracking && !order.trackingEmailSent) {
