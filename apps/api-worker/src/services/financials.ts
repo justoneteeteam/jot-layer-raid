@@ -252,11 +252,18 @@ export async function generatePLReport(
   }
 
   // Add auto-synced Order Fulfillment Cost to Product Fulfillment (COGS) category
+  // and auto-estimate Stripe Processing Fee (2.50%) if no manual Stripe Cost is entered
   for (let m = 1; m <= 12; m++) {
     const cogsFromOrders = monthlyOrderCogs[m] || 0;
     if (cogsFromOrders > 0) {
       monthlyCostByCategory[m]!["Product Fulfillment (COGS)"] =
         (monthlyCostByCategory[m]!["Product Fulfillment (COGS)"] || 0) + cogsFromOrders;
+    }
+
+    const orderRev = monthlyOrderRevenue[m] || 0;
+    if (orderRev > 0 && (!monthlyCostByCategory[m]!["Stripe Cost"] || monthlyCostByCategory[m]!["Stripe Cost"] === 0)) {
+      // Auto compute 2.50% standard gateway fee matching the spreadsheet formula
+      monthlyCostByCategory[m]!["Stripe Cost"] = Number((orderRev * 0.025).toFixed(2));
     }
   }
 

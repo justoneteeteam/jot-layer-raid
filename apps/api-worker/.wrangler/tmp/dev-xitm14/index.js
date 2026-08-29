@@ -55031,6 +55031,10 @@ async function generatePLReport(d1, targetYear, overrideExchangeRate) {
     if (cogsFromOrders > 0) {
       monthlyCostByCategory[m3]["Product Fulfillment (COGS)"] = (monthlyCostByCategory[m3]["Product Fulfillment (COGS)"] || 0) + cogsFromOrders;
     }
+    const orderRev = monthlyOrderRevenue[m3] || 0;
+    if (orderRev > 0 && (!monthlyCostByCategory[m3]["Stripe Cost"] || monthlyCostByCategory[m3]["Stripe Cost"] === 0)) {
+      monthlyCostByCategory[m3]["Stripe Cost"] = Number((orderRev * 0.025).toFixed(2));
+    }
   }
   const monthsData = [];
   let runningCumulativeUsd = 0;
