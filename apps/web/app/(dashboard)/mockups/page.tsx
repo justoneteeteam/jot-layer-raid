@@ -31,13 +31,13 @@ export default function MockupsPage() {
     if (!tpl.original_image_url) {
       return "https://placehold.co/600x600?text=No+Background+Uploaded";
     }
-    const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
     return `${API_BASE}/api/mockups/templates/${tpl.id}/background/download`;
   };
 
   const handleDelete = async (id: number) => {
     if (!window.confirm("Are you sure you want to delete this template?")) return;
-    const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
     try {
       const res = await fetch(`${API_BASE}/api/mockups/templates/${id}`, {
         method: "DELETE",

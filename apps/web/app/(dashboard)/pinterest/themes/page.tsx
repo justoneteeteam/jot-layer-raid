@@ -33,7 +33,7 @@ export default function ThemeLibrary() {
     name: "", season: "", mood: "", colorPalette: "", decorElements: "", recommendedStyles: ""
   });
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
 
   const fetchThemes = async () => {
     try {

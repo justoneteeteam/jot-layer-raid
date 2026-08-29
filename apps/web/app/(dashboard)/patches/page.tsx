@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import UploadModal from "../../components/UploadModal";
 import { Patch, fetchPatches } from "../../lib/api";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
 
 interface PatchEntry {
   id: number;

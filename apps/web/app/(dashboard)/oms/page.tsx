@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import ExcelJS from "exceljs";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
 
 interface OrderItem {
   id: number;
@@ -52,6 +52,8 @@ interface RawOrder {
   created_at: string;
 }
 
+import { useAuth } from "../../components/AuthProvider";
+
 const formatCreatedDate = (dateStr: string) => {
   if (!dateStr) return "—";
   try {
@@ -93,8 +95,29 @@ const formatTimelineDate = (dateStr: string) => {
 };
 
 export default function OrdersPage() {
+  const { role } = useAuth();
   const [rawOrders, setRawOrders] = useState<RawOrder[]>([]);
   const [loading, setLoading] = useState(true);
+
+  if (role === "sub_user") {
+    return (
+      <div style={{
+        padding: "60px 20px",
+        textAlign: "center",
+        maxWidth: "500px",
+        margin: "60px auto",
+        background: "var(--bg-secondary)",
+        border: "1px solid var(--border-default)",
+        borderRadius: "12px"
+      }}>
+        <div style={{ fontSize: "48px", marginBottom: "16px" }}>🔒</div>
+        <h2 style={{ fontSize: "20px", fontWeight: 700, color: "var(--text-primary)", marginBottom: "8px" }}>Access Restricted</h2>
+        <p style={{ color: "var(--text-muted)", fontSize: "14px", lineHeight: "1.5" }}>
+          Your sub-user account has full access to the software except <strong>Orders & Syncs</strong>.
+        </p>
+      </div>
+    );
+  }
   const [search, setSearch] = useState("");
   const [searchField, setSearchField] = useState("all");
   const [platform, setPlatform] = useState("");
@@ -181,8 +204,12 @@ export default function OrdersPage() {
         }),
       });
       if (res.ok) {
-        setActiveDetailOrder(null);
+        setEditEmailSent(true);
+        if (activeDetailOrder) {
+          loadCustomerProfile(editCustomerEmail || activeDetailOrder.customer_email);
+        }
         loadOrders();
+        alert("Logistics updated successfully & notification logged to email thread.");
       } else {
         alert("Failed to save order details.");
       }
@@ -340,6 +367,29 @@ export default function OrdersPage() {
         cost: o.cost,
       });
     });
+
+    // Clean and deduplicate items in each group
+    Object.values(groups).forEach((group) => {
+      if (group.items.length > 1) {
+        const itemsWithVariant = group.items.filter(
+          (i) => (i.variant_value && i.variant_value.trim() !== "") || (i.variant && i.variant.trim() !== "")
+        );
+
+        if (itemsWithVariant.length > 0) {
+          // If we have items with valid variant data, filter out ghost items with no variant data
+          group.items = group.items.filter((item) => {
+            const hasVariant = (item.variant_value && item.variant_value.trim() !== "") || (item.variant && item.variant.trim() !== "");
+            if (hasVariant) return true;
+            // Check if another item in group has variant info
+            const matchingItem = itemsWithVariant.find(
+              (vItem) => vItem.product_name === item.product_name || vItem.id !== item.id
+            );
+            return !matchingItem;
+          });
+        }
+      }
+    });
+
     return Object.values(groups).sort((a, b) => {
       const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
       const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
@@ -1043,11 +1093,15 @@ export default function OrdersPage() {
                               <img
                                 src={item.product_image}
                                 alt=""
+                                onError={(e) => {
+                                  (e.target as HTMLElement).style.display = "none";
+                                  const sibling = (e.target as HTMLElement).nextElementSibling as HTMLElement;
+                                  if (sibling) sibling.style.display = "flex";
+                                }}
                                 style={{ width: "34px", height: "34px", borderRadius: "4px", objectFit: "cover", border: "1px solid var(--border-default)" }}
                               />
-                            ) : (
-                              <div style={{ width: "34px", height: "34px", borderRadius: "4px", background: "var(--bg-tertiary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "12px" }}>🎽</div>
-                            )}
+                            ) : null}
+                            <div style={{ width: "34px", height: "34px", borderRadius: "4px", background: "var(--bg-tertiary)", display: item.product_image ? "none" : "flex", alignItems: "center", justifyContent: "center", fontSize: "12px" }}>🎽</div>
                           </div>
                         ))}
                       </div>
@@ -1108,9 +1162,9 @@ export default function OrdersPage() {
                               whiteSpace: "nowrap",
                               borderBottom: idx < itemsCount - 1 ? "1px dashed #f0f0f0" : "none"
                             }}
-                            title={item.variant_value}
+                            title={item.variant_value || item.variant || "—"}
                           >
-                            {item.variant_value || "—"}
+                            {item.variant_value || item.variant || "—"}
                           </div>
                         ))}
                       </div>
@@ -1347,18 +1401,34 @@ export default function OrdersPage() {
                           <img 
                             src={item.product_image} 
                             alt="" 
+                            onError={(e) => {
+                              (e.target as HTMLElement).style.display = "none";
+                              const sibling = (e.target as HTMLElement).nextElementSibling as HTMLElement;
+                              if (sibling) sibling.style.display = "flex";
+                            }}
                             style={{ width: "42px", height: "42px", borderRadius: "6px", objectFit: "cover", border: "1px solid var(--border-default)" }}
                           />
-                        ) : (
-                          <div style={{ width: "42px", height: "42px", borderRadius: "6px", background: "var(--bg-tertiary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "16px" }}>🎽</div>
-                        )}
+                        ) : null}
+                        <div style={{ width: "42px", height: "42px", borderRadius: "6px", background: "var(--bg-tertiary)", display: item.product_image ? "none" : "flex", alignItems: "center", justifyContent: "center", fontSize: "16px" }}>🎽</div>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ fontSize: "13px", fontWeight: "bold", color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={item.product_name}>
                             {item.product_name}
                           </div>
-                          <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "2px", display: "flex", gap: "8px" }}>
-                            <span>Size: <strong>{item.variant_value || "—"}</strong></span>
-                            {item.variant && <span>Options: <strong>{item.variant}</strong></span>}
+                          <div style={{ fontSize: "11px", color: "var(--text-secondary)", marginTop: "2px", display: "flex", gap: "8px", flexWrap: "wrap" }}>
+                            {(() => {
+                              const vVal = (item.variant_value || "").trim();
+                              const vOpt = (item.variant || "").trim();
+                              if (!vVal && !vOpt) return <span>Size / Variant: <strong>—</strong></span>;
+                              if (vVal && vOpt && (vVal === vOpt || vVal.includes(vOpt) || vOpt.includes(vVal))) {
+                                return <span>Variant / Size: <strong>{vVal || vOpt}</strong></span>;
+                              }
+                              return (
+                                <>
+                                  {vVal && <span>Size: <strong>{vVal}</strong></span>}
+                                  {vOpt && vOpt !== vVal && <span>Options: <strong>{vOpt}</strong></span>}
+                                </>
+                              );
+                            })()}
                           </div>
                         </div>
                         <div style={{ textAlign: "right", fontSize: "13px" }}>

@@ -17,17 +17,19 @@ const navItems = [
   { label: "Bulk Generator", icon: "⚙️", href: "/bulk" },
   { section: "PINTEREST" },
   { label: "AI Studio", icon: "📌", href: "/pinterest" },
-  { label: "Trend Queue", icon: "📊", href: "/pinterest/trends" },
+  { label: "Niche Libraries", icon: "📚", href: "/pinterest/niches" },
+  { label: "Batch Generate", icon: "⚡", href: "/pinterest/batch" },
   { label: "Image Generator", icon: "🎨", href: "/pinterest/generate" },
-  { label: "Prompt Library", icon: "📝", href: "/pinterest/prompts" },
+  { label: "Trend Queue", icon: "📊", href: "/pinterest/trends" },
+  { label: "Style Library", icon: "📝", href: "/pinterest/prompts" },
   { label: "Theme Library", icon: "🎭", href: "/pinterest/themes" },
   { label: "History", icon: "🕐", href: "/pinterest/history" },
-  { label: "Batch Generate", icon: "⚡", href: "/pinterest/batch" },
   { label: "RSS Feeds", icon: "📡", href: "/pinterest/rss" },
   { label: "Auto-Pilot", icon: "⚡", href: "/pinterest/autopilot" },
   { label: "Settings", icon: "🔧", href: "/pinterest/settings" },
   { section: "ORDER MANAGEMENT (OMS)" },
   { label: "Orders & Sync", icon: "📦", href: "/oms" },
+  { label: "P&L Financial Report", icon: "📈", href: "/oms/reports" },
   { label: "WeChat Tracking", icon: "📁", href: "/oms/wechat" },
   { label: "Customer CRM", icon: "👥", href: "/oms/customers" },
   { label: "Product Catalog", icon: "🎽", href: "/oms/products" },
@@ -45,7 +47,7 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const { user, token, loading, logout } = useAuth();
+  const { user, role, token, loading, logout } = useAuth();
 
   if (loading || !token) {
     return (
@@ -68,6 +70,17 @@ export default function DashboardLayout({
     );
   }
 
+  // Filter navigation items for sub_user (exclude Orders & Sync)
+  const isSubUser = role === "sub_user";
+  const filteredNavItems = navItems.filter((item) => {
+    if ("href" in item) {
+      if (isSubUser && (item.href === "/oms" || item.href === "/oms/sync")) {
+        return false;
+      }
+    }
+    return true;
+  });
+
   return (
     <div className="app-layout">
       {/* Sidebar */}
@@ -76,7 +89,7 @@ export default function DashboardLayout({
           🎽 <span>JOTLayerRaid</span>
         </div>
         <nav className="sidebar-nav">
-          {navItems.map((item, i) => {
+          {filteredNavItems.map((item, i) => {
             if ("section" in item) {
               return (
                 <div key={i} className="sidebar-section-label">
@@ -106,7 +119,7 @@ export default function DashboardLayout({
       <div className="main-wrapper">
         <header className="topbar">
           <div className="topbar-title">
-            {navItems.find(
+            {filteredNavItems.find(
               (item) =>
                 "href" in item &&
                 (item.href === "/"
@@ -114,8 +127,20 @@ export default function DashboardLayout({
                   : pathname.startsWith(item.href!))
             )?.label || "JOTLayerRaid"}
           </div>
-          <div className="topbar-actions">
-            <button className="btn btn-ghost" style={{ cursor: "default" }}>{user || "admin"}</button>
+          <div className="topbar-actions" style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{
+              fontSize: "11px",
+              padding: "3px 8px",
+              borderRadius: "12px",
+              fontWeight: 600,
+              textTransform: "uppercase",
+              background: isSubUser ? "rgba(234, 179, 8, 0.15)" : "rgba(13, 148, 136, 0.15)",
+              color: isSubUser ? "#D97706" : "var(--accent)",
+              border: isSubUser ? "1px solid rgba(217, 119, 6, 0.3)" : "1px solid rgba(13, 148, 136, 0.3)"
+            }}>
+              {isSubUser ? "Sub User" : "Admin"}
+            </span>
+            <button className="btn btn-ghost" style={{ cursor: "default" }}>{user || "user"}</button>
             <button className="btn btn-secondary" onClick={logout}>Logout</button>
           </div>
         </header>

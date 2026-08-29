@@ -12,6 +12,7 @@ class Store(Base):
     url = Column(String, nullable=False)
     api_key = Column(String, nullable=False)
     api_secret = Column(String, nullable=False)
+    webhook_url = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     last_synced_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

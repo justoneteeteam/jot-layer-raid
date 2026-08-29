@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 interface RSSChannel {
   id: string;
@@ -13,19 +13,61 @@ interface RSSChannel {
 export default function PinterestRSSManager() {
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
 
-  const [channels, setChannels] = useState<RSSChannel[]>([
-    { id: "account-main", accountName: "Pinterest Account #1 (Main Store)", claimedDomain: "https://vulius.com", themeFilter: "all", limit: 200 },
-    { id: "account-boho", accountName: "Pinterest Account #2 (Boho & Cozy Niche)", claimedDomain: "https://vulius.com", themeFilter: "General", limit: 200 },
-    { id: "account-summer", accountName: "Pinterest Account #3 (Summer Trends)", claimedDomain: "https://vulius.com", themeFilter: "Summer", limit: 200 }
-  ]);
+  const [channels, setChannels] = useState<RSSChannel[]>([]);
+  const [themes, setThemes] = useState<string[]>(["General", "Summer Refresh", "Cozy Fall", "Winter"]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [newAccountName, setNewAccountName] = useState("");
   const [newClaimedDomain, setNewClaimedDomain] = useState("https://vulius.com");
   const [newThemeFilter, setNewThemeFilter] = useState("all");
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [lastGeneratedUrl, setLastGeneratedUrl] = useState<{ name: string; url: string; domain: string } | null>(null);
 
-  const getRSSUrl = (ch: RSSChannel) => {
-    const slug = ch.accountName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const [fetchError, setFetchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchChannelsAndThemes();
+  }, []);
+
+  const fetchChannelsAndThemes = async () => {
+    try {
+      setFetchError(null);
+      const [cRes, tRes] = await Promise.all([
+        fetch(`${API_BASE}/api/pinterest/channels?_t=${Date.now()}`),
+        fetch(`${API_BASE}/api/pinterest/themes?_t=${Date.now()}`)
+      ]);
+
+      if (cRes.ok) {
+        const data = await cRes.json();
+        if (Array.isArray(data)) {
+          const mapped: RSSChannel[] = data.map((c: any) => ({
+            id: c.id,
+            accountName: c.name || c.accountName || c.id,
+            claimedDomain: c.claimedDomain || "https://vulius.com",
+            themeFilter: c.themeFilter || (c.themes && c.themes[0]) || "all",
+            limit: c.dailyPinLimit || 200
+          }));
+          setChannels(mapped);
+        }
+      }
+
+      if (tRes.ok) {
+        const tData = await tRes.json();
+        if (Array.isArray(tData) && tData.length > 0) {
+          setThemes(Array.from(new Set([...tData.map((t: any) => t.name), "General", "Summer Refresh", "Cozy Fall"])));
+        }
+      }
+    } catch (e: any) {
+      console.error("Error fetching channels:", e);
+      setFetchError(e?.message || "Network error");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const getRSSUrl = (ch: { id?: string; accountName: string; claimedDomain: string; themeFilter?: string }) => {
+    const slug = ch.id || ch.accountName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
     let url = `${API_BASE}/api/pinterest/rss/${slug}?domain=${encodeURIComponent(ch.claimedDomain)}`;
     if (ch.themeFilter && ch.themeFilter !== "all") {
       url += `&theme=${encodeURIComponent(ch.themeFilter)}`;
@@ -33,24 +75,71 @@ export default function PinterestRSSManager() {
     return url;
   };
 
-  const handleAddChannel = () => {
+  const handleAddChannel = async () => {
     if (!newAccountName.trim()) {
       alert("Please enter an account or channel name.");
       return;
     }
+    setIsSubmitting(true);
+    const slug = newAccountName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
     const newCh: RSSChannel = {
-      id: `account-${Date.now()}`,
+      id: slug || `account-${Date.now()}`,
       accountName: newAccountName.trim(),
       claimedDomain: newClaimedDomain.trim() || "https://vulius.com",
       themeFilter: newThemeFilter,
       limit: 200
     };
-    setChannels([...channels, newCh]);
+    
+    const rssUrl = getRSSUrl(newCh);
+    setLastGeneratedUrl({
+      name: newCh.accountName,
+      url: rssUrl,
+      domain: newCh.claimedDomain
+    });
+
+    const updated = [newCh, ...channels.filter(c => c.id !== newCh.id)];
+    setChannels(updated);
     setNewAccountName("");
+
+    try {
+      await fetch(`${API_BASE}/api/pinterest/channels`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: newCh.id,
+          name: newCh.accountName,
+          niche: "Home Decor",
+          claimedDomain: newCh.claimedDomain,
+          dailyPinLimit: 10,
+          keywords: ["small apartment decor", "cozy aesthetic room", "summer vibes"],
+          themes: newCh.themeFilter === "all" ? ["General"] : [newCh.themeFilter],
+          styles: ["Modern Scandinavian", "Boho Chic"],
+          model: "flux"
+        })
+      });
+      await fetchChannelsAndThemes();
+    } catch (e) {
+      console.error("Error persisting channel:", e);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleDeleteChannel = (id: string) => {
-    setChannels(channels.filter(c => c.id !== id));
+  const handleDeleteChannel = async (id: string) => {
+    const updated = channels.filter(c => c.id !== id);
+    setChannels(updated);
+    if (lastGeneratedUrl && lastGeneratedUrl.url.includes(id)) {
+      setLastGeneratedUrl(null);
+    }
+
+    try {
+      await fetch(`${API_BASE}/api/pinterest/channels/${encodeURIComponent(id)}`, {
+        method: "DELETE"
+      });
+      await fetchChannelsAndThemes();
+    } catch (e) {
+      console.error("Error deleting channel:", e);
+    }
   };
 
   const copyToClipboard = (text: string, id: string) => {
@@ -140,10 +229,11 @@ export default function PinterestRSSManager() {
               style={{ width: "100%" }}
             >
               <option value="all">All Creatives (No Filter)</option>
-              <option value="General">General / Aesthetics</option>
-              <option value="Summer">Summer Refresh</option>
-              <option value="Fall">Cozy Fall</option>
-              <option value="Winter">Winter / Christmas</option>
+              {themes.map((t) => (
+                <option key={t} value={t}>
+                  {t}
+                </option>
+              ))}
             </select>
           </div>
 
@@ -151,19 +241,99 @@ export default function PinterestRSSManager() {
             <button
               className="btn btn-primary"
               onClick={handleAddChannel}
+              disabled={isSubmitting}
               style={{ width: "100%", padding: "11px 20px", fontWeight: "600", backgroundColor: "#E60023", color: "white" }}
             >
-              Generate RSS Feed Link
+              {isSubmitting ? "⏳ Generating Link..." : "⚡ Generate RSS Feed Link"}
             </button>
           </div>
         </div>
+
+        {/* Highlighted Result Box when Generated */}
+        {lastGeneratedUrl && (
+          <div style={{ marginTop: "20px", padding: "18px 20px", borderRadius: "12px", border: "2px solid #10B981", backgroundColor: "rgba(16, 185, 129, 0.08)", display: "flex", flexDirection: "column", gap: "12px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                <span style={{ fontSize: "20px" }}>🎉</span>
+                <div>
+                  <h4 style={{ margin: 0, fontSize: "15px", fontWeight: "700", color: "#065F46" }}>
+                    RSS Feed Generated Successfully: {lastGeneratedUrl.name}
+                  </h4>
+                  <p style={{ margin: "2px 0 0 0", fontSize: "12px", color: "var(--text-secondary)" }}>
+                    Claimed Domain: <strong>{lastGeneratedUrl.domain}</strong> — Ready to connect in Pinterest Business Auto-Publish settings!
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setLastGeneratedUrl(null)}
+                style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: "14px" }}
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+              <input
+                type="text"
+                readOnly
+                value={lastGeneratedUrl.url}
+                style={{ flex: 1, padding: "10px 14px", borderRadius: "8px", border: "1px solid #10B981", backgroundColor: "white", fontSize: "13px", fontFamily: "monospace", fontWeight: "600" }}
+              />
+              <button
+                className="btn btn-primary"
+                onClick={() => copyToClipboard(lastGeneratedUrl.url, "instant-copy")}
+                style={{ backgroundColor: copiedId === "instant-copy" ? "#10B981" : "#E60023", color: "white", padding: "10px 18px", fontWeight: "700", fontSize: "13px" }}
+              >
+                {copiedId === "instant-copy" ? "✓ Copied!" : "📋 Copy RSS Link"}
+              </button>
+              <a
+                href={lastGeneratedUrl.url}
+                target="_blank"
+                rel="noreferrer"
+                className="btn btn-secondary"
+                style={{ padding: "10px 16px", fontSize: "13px", textDecoration: "none", fontWeight: "600" }}
+              >
+                🔍 Test XML Feed
+              </a>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Active RSS Channels List */}
       <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-        <h2 style={{ fontSize: "20px", fontWeight: "700", color: "var(--text-primary)", margin: 0 }}>
-          📋 Active Pinterest RSS Feeds ({channels.length})
-        </h2>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h2 style={{ fontSize: "20px", fontWeight: "700", color: "var(--text-primary)", margin: 0 }}>
+            📋 Active Pinterest RSS Feeds ({channels.length})
+          </h2>
+          {isLoading && (
+            <span style={{ fontSize: "13px", color: "var(--text-secondary)" }}>
+              🔄 Syncing with Cloudflare...
+            </span>
+          )}
+        </div>
+
+        {fetchError && (
+          <div style={{ padding: "14px 18px", borderRadius: "10px", border: "1px solid #EF4444", backgroundColor: "rgba(239, 68, 68, 0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: "13px", color: "#DC2626" }}>
+              ⚠️ Could not load channels: {fetchError}
+            </span>
+            <button
+              onClick={() => { setIsLoading(true); fetchChannelsAndThemes(); }}
+              style={{ background: "none", border: "1px solid #DC2626", color: "#DC2626", padding: "4px 12px", borderRadius: "6px", fontSize: "12px", cursor: "pointer", fontWeight: "600" }}
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {channels.length === 0 && !isLoading && !fetchError && (
+          <div className="card" style={{ padding: "32px", textAlign: "center", borderRadius: "14px", border: "1px dashed var(--border-default)", color: "var(--text-secondary)" }}>
+            <p style={{ margin: 0, fontSize: "14px" }}>
+              No active RSS feeds found. Enter your Account Name above and click <strong>Generate RSS Feed Link</strong> to create your first feed!
+            </p>
+          </div>
+        )}
 
         {channels.map((ch) => {
           const rssUrl = getRSSUrl(ch);

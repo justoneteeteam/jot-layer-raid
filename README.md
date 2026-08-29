@@ -1,457 +1,192 @@
-# JOTLayerRaid
+# JOTLayerRaid (v2.0 Serverless)
 
-> AI-powered jersey mockup generator & multi-store product publisher.
+> **AI-Powered Jersey Mockup Studio, Multi-Store Product Publisher & Automated Pinterest Content Engine**
 
-Upload a jersey image → AI separates name & number layers → bulk-generate thousands of player variants → push to WooCommerce & Shopbase stores automatically.
+Built entirely on **Cloudflare Serverless Edge Architecture** (Cloudflare Pages + Cloudflare Workers + D1 SQLite + R2 + KV + Cloudflare Queues).
 
 ---
 
-## Tech Stack
+## 🌟 Key Features
+
+1. **AI Layer Decomposition**: Upload sports jerseys; isolate nameplate and number into transparent, repositionable RGBA layers via **Qwen-Image-Layered**.
+2. **Interactive Canvas Layout Editor**: Place, rotate, resize text and sponsor patches on live canvas with athletic block fonts via **Fabric.js**.
+3. **Serverless Satori Compositor**: High-throughput variant generation using **Satori + resvg-wasm** image rasterization inside Workers (no heavy Python/Pillow dependencies).
+4. **Multi-Store Product Publishing**: Automated publishing to **WooCommerce** (`https://vulius.com`), **ShopBase**, and headless **Astro Site** (`/api/oms/webhook/astro`).
+5. **WeChat PDF Logistics & Auto-Fulfillment**:
+   - **Multi-Page Batch Parsing**: Direct WebAssembly/pure-JS PDF parsing on Cloudflare Workers edge via **`unpdf`**.
+   - **Intelligent Tracking & Recipient Extraction**: Identifies Yanwen international barcodes and 22-digit USPS tracking numbers paired with customer name matching.
+   - **Two-Pass Matching & Email Announcer**: Categorizes into High Confidence, Duplicate Warnings, and Unmatched Slips, sets order status to `"in transit"`, and dispatches shipping emails with 1-click live 17Track tracking links.
+6. **Pinterest Studio & AI Niche Architecture**:
+   - **DeepSeek Niche Content Synthesis**: Generate structured 5+ Themes, 15–25 Styles, 6–8 Content Types, 6–10 Recipes, and SEO direction from a single niche input.
+   - **KV Draft Staging & Safety**: 24h temporary preview/editing in KV before committing to production D1 database.
+   - **Cartesian Matrix Batch Generator**: Multi-dimensional generation across URLs × Keywords × Content Types × Themes × Styles × Recipes.
+   - **Multi-Account Autopilot**: Niche-bound channel distribution with guaranteed 0 duplicate creatives across accounts.
+   - **Dynamic Media RSS 2.0 XML Feeds**: Live feeds with niche/theme filters for Pinterest Business auto-publishing.
+7. **Customer CRM & Deliverability**:
+   - Cloudflare `EMAIL` binding for transactional & deliverability emails.
+   - Inbound email webhook parser, support ticket threading, and auto-reply templates.
+
+---
+
+## 🛠️ Architecture & Tech Stack
 
 | Layer | Technology | Purpose |
-|-------|-----------|---------|
-| Frontend | **Next.js 15** (App Router) | Dashboard, wizards, real-time job tracking |
-| UI Library | **Shadcn UI** + **Radix Primitives** | Light-theme minimal components |
-| Styling | **Vanilla CSS** (CSS Modules) | Clean, maintainable, no utility bloat |
-| Backend | **FastAPI** (Python 3.12) | REST API, WebSocket, file handling |
-| AI Engine | **Qwen API** (Qwen-Image-Layered) | Jersey image layer separation |
-| Image Processing | **Pillow** | Flat text overlay for name/number compositing |
-| Database | **PostgreSQL** via **Supabase** | Teams, players, templates, jobs |
-| File Storage | **Cloudflare R2** | Images, fonts — organized per team |
-| Job Queue | **Celery** + **Redis** | Background bulk generation & store uploads |
-| Scheduler | **Celery Beat** | Weekly Yahoo roster scraping |
-| Auth | **NextAuth.js** | Simple credential-based login |
-| Store APIs | **WooCommerce REST v3** / **Shopbase Admin** | Product creation with images & SEO |
-| Monorepo | **Turborepo** + **pnpm** | Unified builds, shared configs |
-| Deployment | **Vercel** (web) + **Railway** (api) | CI/CD, auto-scaling |
+|:---|:---|:---|
+| **Frontend** | **Next.js 16** (App Router, Edge Runtime) | Dashboard, Fabric.js interactive canvas, hosted on **Cloudflare Pages** |
+| **UI System** | **Shadcn UI** + **Radix Primitives** | Minimalist, light-theme design with custom CSS tokens |
+| **Backend API** | **Hono** (TypeScript) | Ultra-fast REST router running on **Cloudflare Workers** |
+| **AI Engine** | **DeepSeek Chat** + **Workers AI** + **Qwen** | Niche library generation, SEO text synthesis, image generation |
+| **Compositing** | **Satori + resvg-wasm** | Serverless SVG rendering & WebAssembly PNG rasterization |
+| **Database** | **Cloudflare D1** (SQLite) + **Drizzle ORM** | 22 relational tables managing catalog, OMS, CRM, and Pinterest libraries |
+| **Job Queues** | **Cloudflare Queues** | Horizontal background processing (`bulk-jersey-jobs`, `pinterest-jobs`) |
+| **Storage & Caching** | **Cloudflare R2** & **KV** | R2 bucket for images/fonts; KV namespace for fonts & 24h niche drafts |
+| **Email Gateway** | **Cloudflare Send Email** | Serverless transactional emails via `EMAIL` binding |
 
 ---
 
-## UX Workflow
+## ☁️ Live Environments
 
-### First-Time Setup
+| Service | Type | Production URL |
+|:---|:---|:---|
+| **Frontend Web** | Cloudflare Pages | [https://jot-layer-raid-web.pages.dev](https://jot-layer-raid-web.pages.dev) |
+| **Backend API** | Cloudflare Worker | [https://api-worker.justoneteeteam.workers.dev](https://api-worker.justoneteeteam.workers.dev) |
+| **R2 Asset Storage** | Cloudflare R2 | `pub-3981afcf4d1b47279c20739515baec8f.r2.dev` |
 
-```
-Login
-  │
-  ├─→ 1. AI Mockup Creator
-  │     Upload raw jersey PNG
-  │     Select prompt: "Separate Layers" or "Fix Text Artifacts"
-  │     → Qwen AI returns: blank jersey + name layer + number layer
-  │     → Download individual PNGs or ZIP
-  │     → Save as mockup template
-  │
-  ├─→ 2. Mockup Library
-  │     Browse saved templates by team
-  │     Click-to-place name/number positions on the jersey
-  │     Select font, size, color, outline
-  │     Live preview with sample text
-  │
-  ├─→ 3. Font Library
-  │     Upload .ttf / .otf files
-  │     Preview with sample text
-  │     Tag by league (NFL, MLB, NCAA, NHL)
-  │
-  ├─→ 4. Player Database
-  │     Import via CSV upload (with duplicate detection)
-  │     Or sync from Yahoo Sports roster
-  │     All changes go through Approval queue
-  │
-  └─→ 5. Store Settings
-        Add WooCommerce / Shopbase stores
-        Enter API credentials
-        Test connection
-```
+---
 
-### Daily Operations
+## 🚀 Pinterest Niche-First Workflow
 
 ```
-Bulk Job Wizard
+NICHE                  e.g. "ChatGPT Education for Marketers"
   │
-  Step 1 → Select mockup template(s)
-  Step 2 → Select players (filter by team / league)
-  Step 3 → Choose variants: Men ✅  Women ✅  Youth ✅
-  Step 4 → Configure SEO: title template, description, internal links. Add the product category with the fix parameter: domain-player-name-team-number-jersey.
-  Step 5 → Select target stores
-  Step 6 → Review summary → Click RUN
-  Step 7 → Add into Google Sheets with product name, url
+  ├── CONTENT TYPES    e.g. Prompt Card, Infographic, Step-by-Step, Workflow Diagram
   │
-  └─→ Background Engine
-        Generates all images (Pillow flat text overlay)
-        Uploads to R2 (team-specific folders)
-        Creates separate products on each selected store
-        Real-time progress via WebSocket
+  ├── THEMES           e.g. Marketing Prompt Mastery, AI Marketing Workflows
+  │
+  ├── STYLES           e.g. Modern SaaS, Dark AI, Editorial Education, Minimal Tech
+  │
+  └── RECIPES          e.g. Vertical 2:3, prompt container box, 3 takeaway bullets
 ```
 
-### Weekly Auto-Sync
-
-```
-Every Monday (Celery Beat)
-  │
-  └─→ Yahoo Roster Scraper
-        Fetches roster pages for all NFL teams
-        Detects new / changed / removed players
-        Creates pending ROSTER_CHANGE records
-        │
-        └─→ Admin reviews in Approval UI
-              Approve → player added to database
-              Reject → logged and skipped
-              Option: auto-trigger bulk job for approved players
+```mermaid
+flowchart LR
+    A["👤 User Input: Niche"] --> B["🤖 DeepSeek Chat"]
+    B --> C["📋 KV Draft (24h TTL)"]
+    C --> D["👁️ Preview & JSON Editor"]
+    D -->|Approve| E["💾 D1 Database"]
+    E --> F["📦 Batch Matrix Generator"]
+    F --> G["🖼️ Image Generation (FLUX/Qwen)"]
+    G --> H["☁️ Cloudflare R2"]
+    H --> I["📡 Dynamic RSS XML Feeds"]
+    I --> J["📌 Pinterest Auto-Publishing"]
 ```
 
 ---
 
-## UI Design System — Light Theme Minimal
-
-### Design Principles
-
-| Principle | Rule |
-|-----------|------|
-| **Theme** | Light-only, clean white backgrounds |
-| **Typography** | Google Fonts — **Inter** (body), **Space Grotesk** (headings) |
-| **Color Palette** | Neutral grays + one accent color per context |
-| **Spacing** | 8px grid system (4, 8, 12, 16, 24, 32, 48) |
-| **Borders** | 1px solid `#E5E7EB`, border-radius: 8px |
-| **Shadows** | Subtle only — `0 1px 3px rgba(0,0,0,0.08)` |
-| **Icons** | Lucide icons (consistent with Shadcn) |
-| **Density** | Comfortable — generous padding, no cramming |
-| **Animations** | Minimal — 150ms ease transitions on hover/focus only |
-
-### Color Tokens
-
-```css
-:root {
-  /* Backgrounds */
-  --bg-primary:    #FFFFFF;
-  --bg-secondary:  #F9FAFB;
-  --bg-tertiary:   #F3F4F6;
-
-  /* Text */
-  --text-primary:   #111827;
-  --text-secondary: #6B7280;
-  --text-muted:     #9CA3AF;
-
-  /* Borders */
-  --border-default: #E5E7EB;
-  --border-hover:   #D1D5DB;
-
-  /* Accent — Teal (primary actions) */
-  --accent:         #0D9488;
-  --accent-hover:   #0F766E;
-  --accent-light:   #CCFBF1;
-
-  /* Status */
-  --success:  #16A34A;
-  --warning:  #EAB308;
-  --error:    #DC2626;
-  --info:     #2563EB;
-
-  /* Shadows */
-  --shadow-sm:  0 1px 2px rgba(0, 0, 0, 0.05);
-  --shadow-md:  0 1px 3px rgba(0, 0, 0, 0.08);
-  --shadow-lg:  0 4px 12px rgba(0, 0, 0, 0.1);
-}
-```
-
-### Layout Structure
-
-```
-┌──────────────────────────────────────────────────┐
-│  Logo    JOTLayerRaid              [User] [Logout]│  ← Top bar (56px, white, border-bottom)
-├────────┬─────────────────────────────────────────┤
-│        │                                         │
-│  🤖   │   Page Content Area                     │
-│  📁   │                                         │
-│  🔤   │   Cards with subtle shadows             │
-│  🏈   │   Tables with striped rows              │
-│  ⚙️   │   Forms with labeled inputs             │
-│  🔧   │                                         │
-│        │                                         │
-│ Sidebar│                                         │  ← Sidebar (240px, #F9FAFB)
-│ (icons │                                         │
-│ +label)│                                         │
-├────────┴─────────────────────────────────────────┤
-│  © 2026 JOTLayerRaid                             │  ← Footer (optional, 40px)
-└──────────────────────────────────────────────────┘
-```
-
-### Component Styles
-
-**Buttons**
-- Primary: `bg: var(--accent)`, white text, 8px radius, 150ms hover darken
-- Secondary: `bg: white`, gray border, dark text
-- Ghost: no background, text only, underline on hover
-
-**Cards**
-- White background, 1px border `var(--border-default)`, 8px radius, `var(--shadow-sm)`
-- 24px padding inside
-
-**Tables**
-- Header: `bg: var(--bg-secondary)`, bold text, uppercase 11px tracking
-- Rows: alternate `white` / `var(--bg-secondary)`
-- Hover: `var(--bg-tertiary)`
-
-**Form Inputs**
-- 40px height, 8px radius, 1px border
-- Focus: 2px ring `var(--accent)` with 0.15 opacity
-
-**Status Badges**
-- Pill shape (999px radius), 10px 12px padding
-- Colors map to status tokens (success/warning/error/info)
-
-**Sidebar Navigation**
-- Active item: `bg: var(--accent-light)`, `color: var(--accent)`, left 3px border accent
-- Inactive: `color: var(--text-secondary)`, hover `var(--bg-tertiary)`
-
----
-
-## Development Setup
+## 💻 Local Development Setup
 
 ### Prerequisites
 
 - **Node.js** ≥ 20
 - **pnpm** ≥ 9
-- **Python** ≥ 3.12
-- **Docker Desktop** (for PostgreSQL + Redis locally)
+- **Wrangler CLI** ≥ 3.114
 
 ### Quick Start
 
 ```bash
-# 1. Clone
+# 1. Clone repo
 git clone https://github.com/your-org/JOTLayerRaid.git
 cd JOTLayerRaid
 
-# 2. Install frontend dependencies
+# 2. Install workspace dependencies
 pnpm install
 
-# 3. Start PostgreSQL + Redis
-docker compose up -d
-
-# 4. Setup Python backend
-cd apps/api
-python -m venv .venv
-.venv\Scripts\activate        # Windows
-pip install -r requirements.txt
-
-# 5. Run database migrations
-alembic upgrade head
-
-# 6. Seed NFL teams
-python -m seeds.seed_db
-
-# 7. Start everything (from project root)
-cd ../..
+# 3. Start local development (Turbo)
 pnpm dev
 ```
 
-This runs:
-- **Next.js** on `http://localhost:3000`
-- **FastAPI** on `http://localhost:8000`
-- **Swagger docs** at `http://localhost:8000/docs`
-
-### Environment Variables
-
-Create `.env` files in both apps:
-
-**`apps/web/.env.local`**
-```env
-NEXTAUTH_SECRET=your-random-secret
-NEXTAUTH_URL=http://localhost:3000
-NEXT_PUBLIC_API_URL=http://localhost:8000
-```
-
-**`apps/api/.env`**
-```env
-# Database
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/jotlayerraid
-
-# Redis
-REDIS_URL=redis://localhost:6379/0
-
-# AI
-QWEN_API_KEY=your-qwen-api-key
-
-# Cloudflare R2
-R2_ACCOUNT_ID=your-account-id
-R2_ACCESS_KEY_ID=your-access-key
-R2_SECRET_ACCESS_KEY=your-secret-key
-R2_BUCKET_NAME=jersey-mockups
-
-# Auth
-JWT_SECRET=your-jwt-secret
-```
-
-### Docker Compose (Local Dev)
-
-```yaml
-# docker-compose.yml
-services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: jotlayerraid
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-
-volumes:
-  pgdata:
-```
-
-### Project Commands
+### Build & Deploy Commands
 
 ```bash
-# Run everything in dev mode
-pnpm dev
+# Type check all packages
+pnpm check-types
 
-# Run only frontend
-pnpm --filter web dev
-
-# Run only backend
-cd apps/api && uvicorn main:app --reload
-
-# Run Celery worker (for bulk jobs)
-cd apps/api && celery -A workers worker --loglevel=info
-
-# Run Celery Beat (for weekly roster scraper)
-cd apps/api && celery -A workers beat --loglevel=info
-
-# Run database migrations
-cd apps/api && alembic upgrade head
-
-# Create new migration
-cd apps/api && alembic revision --autogenerate -m "description"
-
-# Run backend tests
-cd apps/api && pytest tests/ -v
-
-# Build frontend for production
+# Build Next.js frontend
 pnpm --filter web build
 
-# Type check
-pnpm --filter web tsc --noEmit
+# Build Next.js for Cloudflare Pages (Edge output)
+pnpm --filter web run pages:build
+
+# Deploy Frontend to Cloudflare Pages
+pnpm --filter web exec wrangler pages deploy .vercel/output/static --project-name=jot-layer-raid-web
+
+# Deploy Backend Worker
+pnpm --filter api-worker exec wrangler deploy
+
+# Execute D1 database queries/migrations
+pnpm --filter api-worker exec wrangler d1 execute jotlayerraid-db --remote --command="SELECT COUNT(*) FROM pinterest_niches;"
 ```
 
-### Folder Structure
+---
+
+## 📁 Repository Structure
 
 ```
-JOTLayerRaid/
+jot-layer-raid/
 ├── apps/
-│   ├── web/                          # Next.js 15
+│   ├── web/                                  # Next.js 16 Edge (Cloudflare Pages)
 │   │   ├── app/
-│   │   │   ├── layout.tsx            # Sidebar + top bar + auth guard
-│   │   │   ├── login/page.tsx        # Login page
-│   │   │   ├── page.tsx              # Dashboard
-│   │   │   ├── mockups/
-│   │   │   │   ├── page.tsx          # Mockup library grid
-│   │   │   │   ├── create/page.tsx   # AI Mockup Creator
-│   │   │   │   └── [id]/page.tsx     # Template editor
-│   │   │   ├── fonts/page.tsx        # Font library
-│   │   │   ├── patches/page.tsx      # Patch library
-│   │   │   ├── database/
-│   │   │   │   ├── page.tsx          # Team/Player browser
-│   │   │   │   └── import/page.tsx   # CSV import wizard
-│   │   │   ├── roster/
-│   │   │   │   └── approval/page.tsx # Unified approval UI
-│   │   │   ├── bulk/
-│   │   │   │   ├── page.tsx          # Bulk job wizard
-│   │   │   │   └── [jobId]/page.tsx  # Live job progress
-│   │   │   └── settings/page.tsx     # Store settings
-│   │   ├── components/               # Shared UI components
-│   │   ├── lib/                      # API client, auth helpers
-│   │   ├── styles/                   # Global CSS + design tokens
-│   │   └── public/
+│   │   │   ├── (dashboard)/
+│   │   │   │   ├── pinterest/
+│   │   │   │   │   ├── niches/               # Niche Library Manager list
+│   │   │   │   │   │   ├── create/           # 3-step AI Niche Creation Wizard
+│   │   │   │   │   │   └── [id]/             # Niche Detail Viewer (Edge Runtime)
+│   │   │   │   │   ├── batch/                # Niche-first Cartesian Batch Generator
+│   │   │   │   │   ├── autopilot/            # Multi-account autopilot with niche selector
+│   │   │   │   │   ├── rss/                  # Dynamic niche & theme Media RSS feeds
+│   │   │   │   │   ├── generate/             # Single pin AI generator
+│   │   │   │   │   ├── history/              # Generated pins gallery
+│   │   │   │   │   ├── themes/               # Standalone themes manager
+│   │   │   │   │   ├── prompts/              # Standalone styles manager
+│   │   │   │   │   └── settings/             # API keys and Pinterest configs
+│   │   │   │   ├── oms/                      # Order management, sync & customers
+│   │   │   │   ├── marketing/                # Email campaigns & deliverability
+│   │   │   │   ├── database/                 # Teams, players & font libraries
+│   │   │   │   └── mockups/                  # Mockup template catalog
+│   │   │   └── (editor)/mockups/[id]/edit/   # Fabric.js interactive canvas editor (Edge Runtime)
+│   │   ├── wrangler.jsonc                    # Pages project config
+│   │   └── package.json
 │   │
-│   └── api/                          # FastAPI
-│       ├── main.py                   # App entry + middleware
-│       ├── config.py                 # Env config loader
-│       ├── models/                   # SQLAlchemy ORM
-│       ├── routers/                  # API endpoints
-│       │   ├── auth.py
-│       │   ├── mockups.py
-│       │   ├── mockups_separation.py
-│       │   ├── database.py
-│       │   ├── bulk.py
-│       │   └── settings.py
-│       ├── workers/                  # Celery tasks
-│       │   ├── image_generator.py
-│       │   └── store_uploader.py
-│       ├── services/                 # Business logic
-│       │   ├── layer_separation.py
-│       │   ├── roster_scraper.py
-│       │   ├── image_engine.py
-│       │   ├── woocommerce.py
-│       │   ├── shopbase.py
-│       │   ├── r2_storage.py
-│       │   └── seo_generator.py
-│       ├── tasks/
-│       │   └── weekly_roster_job.py
-│       ├── seeds/
-│       │   ├── nfl_teams.json
-│       │   └── seed_db.py
-│       └── tests/
+│   └── api-worker/                           # Hono (Cloudflare Workers)
+│       ├── src/
+│       │   ├── index.ts                      # API router (Niches, OMS, Mockups, Queue handler, Cron)
+│       │   ├── db/
+│       │   │   └── schema.ts                 # Drizzle SQLite ORM schema (22 tables)
+│       │   ├── services/
+│       │   │   ├── niche-generator.ts        # DeepSeek AI Niche Library synthesis & validation
+│       │   │   ├── pinterest-ai.ts           # Creative rendering, Flux/Qwen/OpenAI, SEO copywriting
+│       │   │   ├── autopilot.ts              # Zero-duplication multi-account channel engine
+│       │   │   ├── rss-service.ts            # Media RSS 2.0 XML builder with niche/theme filters
+│       │   │   ├── image-engine.ts           # Satori + resvg-wasm layer rasterizer
+│       │   │   ├── r2-storage.ts             # Cloudflare R2 bucket upload/delete
+│       │   │   ├── oms-sync.ts               # WooCommerce, ShopBase & Astro sync
+│       │   │   ├── wechat-service.ts         # Multi-page PDF text extraction & order matcher (unpdf)
+│       │   │   └── email-service.ts          # Cloudflare EMAIL binding delivery
+│       │   └── types.ts                      # TypeScript Worker bindings interface
+│       ├── drizzle/                          # Drizzle SQL migrations
+│       ├── wrangler.jsonc                    # Worker bindings, D1, KV, Queues, Crons
+│       └── package.json
 │
-├── docker-compose.yml
-├── turbo.json
-├── pnpm-workspace.yaml
-├── package.json
-└── README.md                         # ← You are here
+├── package.json                              # Monorepo root
+├── pnpm-workspace.yaml                       # PNPM workspace
+├── PROJECT.md                                # System architecture & project documentation
+├── STATE.md                                  # Operational module status tracker
+├── README.md                                 # User & developer guide
+└── turbo.json                                # Turborepo configuration
 ```
 
 ---
 
-## Deployment
+## 📄 License
 
-### Frontend → Vercel
-
-```bash
-# Connect GitHub repo to Vercel
-# Set root directory: apps/web
-# Set env vars in Vercel dashboard
-```
-
-### Backend → Railway
-
-```bash
-# Connect GitHub repo to Railway
-# Add services: FastAPI, PostgreSQL, Redis
-# Set env vars in Railway dashboard
-# Celery worker runs as a separate Railway service
-```
-
-### R2 Bucket Structure
-
-```
-jot-layer-raid-bucket/jersey-mockups/                    # Single R2 bucket
-├── eagles/                        # Per-team prefix
-│   ├── templates/
-│   │   ├── home-green-blank.png
-│   │   ├── home-green-name.png
-│   │   └── home-green-number.png
-│   └── generated/
-│       ├── hurts-1-men-green.png
-│       └── hurts-1-women-green.png
-├── cowboys/
-│   ├── templates/
-│   └── generated/
-├── seahawks/
-│   ├── templates/
-│   └── generated/
-└── fonts/
-    ├── nfl-block-bold.ttf
-    └── mlb-script.otf
-```
-
----
-
-## License
-
-Private — All rights reserved.
+Private — JOT All rights reserved.

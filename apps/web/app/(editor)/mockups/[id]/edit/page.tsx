@@ -109,7 +109,7 @@ export default function EditorPage() {
 
     // Load saved state or default background
     const loadFallbackBackground = async () => {
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
       try {
         const res = await fetch(`${API_BASE}/api/mockups/templates/${template.id}/layers`);
         const data = await res.json();
@@ -145,7 +145,7 @@ export default function EditorPage() {
     const initCanvas = async () => {
       if (template.canvas_json) {
         let freshJson = { ...template.canvas_json };
-        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
         
         // If the background was stored in the legacy format as freshJson.backgroundImage,
         // we swap in the fresh URL, but we will also extract it into a standard object after loading.
@@ -386,7 +386,7 @@ export default function EditorPage() {
       await uploadBackground(template.id, file);
       
       // Refetch layers to get new presigned URL
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
       const res = await fetch(`${API_BASE}/api/mockups/templates/${template.id}/layers`);
       const data = await res.json();
       

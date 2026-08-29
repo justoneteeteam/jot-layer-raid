@@ -3,18 +3,31 @@
 import React, { useState, useRef } from "react";
 import Link from "next/link";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
+
+interface CandidateOrderOption {
+  id: number;
+  order_id: string;
+  product_name: string;
+  quantity: number;
+  created_at: string;
+  score: number;
+  reason?: string;
+}
 
 interface MatchResult {
   filename: string;
   filepath: string;
   extracted_tracking: string;
   formatted_tracking: string;
+  carrier_key?: string;
+  carrier_name?: string;
   extracted_customer: string;
   matched_order_id: number | null;
   matched_order_number: string | null;
   confidence: string; // "high", "unmatched", "none", "duplicate"
   existing_tracking?: string | null;
+  candidate_orders?: CandidateOrderOption[];
 }
 
 export default function WeChatSyncPage() {
@@ -26,6 +39,22 @@ export default function WeChatSyncPage() {
   const [syncSuccess, setSyncSuccess] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"success" | "duplicate" | "failed">("success");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Switch target order when multiple candidate orders exist for the same customer (Case 4)
+  const handleSelectCandidateOrder = (matchIndex: number, candidateId: number) => {
+    setScannedMatches((prev) =>
+      prev.map((item, idx) => {
+        if (idx !== matchIndex) return item;
+        const candidate = item.candidate_orders?.find((c) => c.id === candidateId);
+        if (!candidate) return item;
+        return {
+          ...item,
+          matched_order_id: candidate.id,
+          matched_order_number: candidate.order_id,
+        };
+      })
+    );
+  };
 
   // Derive filtered matching subsets
   const successMatches = scannedMatches.filter((m) => m.confidence === "high");
@@ -285,7 +314,7 @@ export default function WeChatSyncPage() {
       {syncSuccess && (
         <div style={{ display: "flex", alignItems: "center", gap: "10px", background: "hsl(142.1, 70.6%, 95.3%)", border: "1px solid hsl(142.1, 76.2%, 80%)", color: "hsl(142.1, 76.2%, 25%)", padding: "12px 18px", borderRadius: "10px", marginTop: "24px", fontSize: "14px", fontWeight: "500", boxShadow: "0 4px 6px -1px rgba(0,0,0,0.01)" }}>
           <span style={{ fontSize: "18px" }}>🎉</span>
-          <span>{syncSuccess} Database records are updated and synced successfully to "in transit".</span>
+          <span>{syncSuccess}</span>
         </div>
       )}
 
@@ -536,19 +565,63 @@ export default function WeChatSyncPage() {
                               </div>
                             </td>
                             <td style={{ padding: "14px" }}>
-                              <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontFamily: "'Courier New', Courier, monospace", fontWeight: "700", color: "var(--text-primary)", fontSize: "13px", background: "#f3f4f6", padding: "4px 8px", borderRadius: "6px" }}>
-                                <span>🚚</span>
-                                <span>{match.formatted_tracking || "No Barcode"}</span>
+                              <div style={{ display: "inline-flex", flexDirection: "column", gap: "2px" }}>
+                                <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontFamily: "'Courier New', Courier, monospace", fontWeight: "700", color: "var(--text-primary)", fontSize: "13px", background: "#f3f4f6", padding: "4px 8px", borderRadius: "6px" }}>
+                                  <span>🚚</span>
+                                  <span>{match.formatted_tracking || "No Barcode"}</span>
+                                </div>
+                                {match.carrier_name && (
+                                  <span style={{ fontSize: "10px", fontWeight: "700", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em", paddingLeft: "4px" }}>
+                                    {match.carrier_name}
+                                  </span>
+                                )}
                               </div>
                             </td>
                             <td style={{ padding: "14px" }}>
                               <span style={{ fontWeight: "700", fontSize: "13px", color: "var(--text-primary)" }}>{match.extracted_customer || "—"}</span>
                             </td>
                             <td style={{ padding: "14px" }}>
-                              <div style={{ display: "inline-flex", flexDirection: "column" }}>
-                                <span style={{ fontWeight: "700", fontSize: "13px", color: "var(--accent)" }}>Order {match.matched_order_number}</span>
-                                <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>Customer DB ID: #{match.matched_order_id}</span>
-                              </div>
+                              {match.candidate_orders && match.candidate_orders.length > 1 ? (
+                                <div style={{ display: "inline-flex", flexDirection: "column", gap: "4px" }}>
+                                  <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                                    <span style={{ fontWeight: "700", fontSize: "13px", color: "var(--accent)" }}>
+                                      Order {match.matched_order_number}
+                                    </span>
+                                    <span style={{ fontSize: "10px", padding: "2px 6px", borderRadius: "4px", background: "rgba(59, 130, 246, 0.1)", color: "#2563eb", fontWeight: "700" }}>
+                                      {match.candidate_orders.length} orders
+                                    </span>
+                                  </div>
+                                  <select
+                                    value={match.matched_order_id || ""}
+                                    onChange={(e) => handleSelectCandidateOrder(index, Number(e.target.value))}
+                                    style={{
+                                      fontSize: "11px",
+                                      padding: "4px 8px",
+                                      borderRadius: "6px",
+                                      border: "1px solid #cbd5e1",
+                                      background: "#ffffff",
+                                      color: "#1e293b",
+                                      maxWidth: "260px",
+                                      fontWeight: "500",
+                                      cursor: "pointer"
+                                    }}
+                                  >
+                                    {match.candidate_orders.map((cand) => (
+                                      <option key={cand.id} value={cand.id}>
+                                        Order {cand.order_id} • {cand.product_name.slice(0, 24)}... ({cand.score}% match)
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>
+                                    Customer DB ID: #{match.matched_order_id}
+                                  </span>
+                                </div>
+                              ) : (
+                                <div style={{ display: "inline-flex", flexDirection: "column" }}>
+                                  <span style={{ fontWeight: "700", fontSize: "13px", color: "var(--accent)" }}>Order {match.matched_order_number}</span>
+                                  <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>Customer DB ID: #{match.matched_order_id}</span>
+                                </div>
+                              )}
                             </td>
                             <td style={{ padding: "14px", textAlign: "center" }}>
                               <span style={{ display: "inline-block", padding: "4px 10px", borderRadius: "999px", fontSize: "11px", fontWeight: "700", background: "hsl(142.1, 70.6%, 90.3%)", color: "hsl(142.1, 76.2%, 20%)" }}>
@@ -569,25 +642,21 @@ export default function WeChatSyncPage() {
                     <p style={{ fontSize: "12px", margin: 0 }}>None of the uploaded shipping labels match orders that already have tracking codes set.</p>
                   </div>
                 ) : (
-                  <div>
-                    <div style={{ background: "hsl(47.9, 95.8%, 97%)", borderBottom: "1px solid hsl(47.9, 95.8%, 90%)", padding: "12px 18px", fontSize: "12px", color: "hsl(47.9, 95.8%, 25%)", fontWeight: "500", display: "flex", gap: "8px", alignItems: "center" }}>
-                      <span>💡</span>
-                      <span><strong>Warning:</strong> These orders already have tracking codes in the system. They are unchecked by default to prevent accidental overrides. Check them only if you wish to overwrite their tracking.</span>
-                    </div>
-                    <table className="table" style={{ width: "100%", borderCollapse: "collapse", margin: 0 }}>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
                       <thead>
-                        <tr style={{ background: "rgba(243, 244, 246, 0.5)", borderBottom: "1px solid var(--border-default)", fontSize: "11px", fontWeight: "700", textTransform: "uppercase", letterSpacing: "0.05em", color: "var(--text-secondary)" }}>
-                          <th style={{ width: "50px", padding: "14px", textAlign: "center" }}>
+                        <tr style={{ borderBottom: "1px solid var(--border-default)", background: "#f8fafc", color: "var(--text-muted)", fontSize: "12px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                          <th style={{ padding: "14px", textAlign: "center", width: "40px" }}>
                             <input
                               type="checkbox"
-                              checked={duplicateMatches.every(m => selectedIndices.includes(scannedMatches.indexOf(m)))}
+                              checked={duplicateMatches.length > 0 && duplicateMatches.every((item) => selectedIndices.includes(scannedMatches.indexOf(item)))}
                               onChange={() => {
-                                const dupIndices = duplicateMatches.map(m => scannedMatches.indexOf(m));
-                                const allChecked = dupIndices.every(idx => selectedIndices.includes(idx));
-                                if (allChecked) {
-                                  setSelectedIndices(prev => prev.filter(idx => !dupIndices.includes(idx)));
+                                const dupIndices = duplicateMatches.map((m) => scannedMatches.indexOf(m));
+                                const allSelected = dupIndices.every((idx) => selectedIndices.includes(idx));
+                                if (allSelected) {
+                                  setSelectedIndices(selectedIndices.filter((idx) => !dupIndices.includes(idx)));
                                 } else {
-                                  setSelectedIndices(prev => Array.from(new Set([...prev, ...dupIndices])));
+                                  setSelectedIndices(Array.from(new Set([...selectedIndices, ...dupIndices])));
                                 }
                               }}
                             />
@@ -619,9 +688,16 @@ export default function WeChatSyncPage() {
                                 </div>
                               </td>
                               <td style={{ padding: "14px" }}>
-                                <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontFamily: "'Courier New', Courier, monospace", fontWeight: "700", color: "var(--text-primary)", fontSize: "13px", background: "#f3f4f6", padding: "4px 8px", borderRadius: "6px" }}>
-                                  <span>🚚</span>
-                                  <span>{match.formatted_tracking}</span>
+                                <div style={{ display: "inline-flex", flexDirection: "column", gap: "2px" }}>
+                                  <div style={{ display: "inline-flex", alignItems: "center", gap: "6px", fontFamily: "'Courier New', Courier, monospace", fontWeight: "700", color: "var(--text-primary)", fontSize: "13px", background: "#f3f4f6", padding: "4px 8px", borderRadius: "6px" }}>
+                                    <span>🚚</span>
+                                    <span>{match.formatted_tracking}</span>
+                                  </div>
+                                  {match.carrier_name && (
+                                    <span style={{ fontSize: "10px", fontWeight: "700", color: "#64748b", textTransform: "uppercase", letterSpacing: "0.04em", paddingLeft: "4px" }}>
+                                      {match.carrier_name}
+                                    </span>
+                                  )}
                                 </div>
                               </td>
                               <td style={{ padding: "14px" }}>

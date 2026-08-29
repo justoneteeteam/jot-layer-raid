@@ -2,14 +2,36 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
+import { useAuth } from "../../../components/AuthProvider";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
 
 export default function StoreSyncPage() {
+  const { role } = useAuth();
   const [syncing, setSyncing] = useState(false);
   const [platform, setPlatform] = useState("all");
   const [syncLogs, setSyncLogs] = useState<string[]>([]);
   const [syncedStats, setSyncedStats] = useState<any | null>(null);
+
+  if (role === "sub_user") {
+    return (
+      <div style={{
+        padding: "60px 20px",
+        textAlign: "center",
+        maxWidth: "500px",
+        margin: "60px auto",
+        background: "var(--bg-secondary)",
+        border: "1px solid var(--border-default)",
+        borderRadius: "12px"
+      }}>
+        <div style={{ fontSize: "48px", marginBottom: "16px" }}>🔒</div>
+        <h2 style={{ fontSize: "20px", fontWeight: 700, color: "var(--text-primary)", marginBottom: "8px" }}>Access Restricted</h2>
+        <p style={{ color: "var(--text-muted)", fontSize: "14px", lineHeight: "1.5" }}>
+          Your sub-user account has full access to the software except <strong>Orders & Syncs</strong>.
+        </p>
+      </div>
+    );
+  }
 
   const handleStartSync = async () => {
     setSyncing(true);

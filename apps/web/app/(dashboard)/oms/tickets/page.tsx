@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
 
 interface Ticket {
   id: number;
@@ -110,6 +110,29 @@ const parseReply = (rawReply: string) => {
         }
       }
     }
+  } else if (rawReply.startsWith("[AI Draft")) {
+    sender = "🤖 DeepSeek AI Draft (Pending Review)";
+    align = "flex-end";
+    bg = "#fefce8"; // Amber/yellow tint for AI draft pending review
+    border = "1px solid #fde047";
+    textColor = "#713f12";
+    borderRadius = "12px 12px 0px 12px";
+
+    const match = rawReply.match(/^\[AI Draft\s*(?:\|\s*([^\]]+))?\]\s*([\s\S]*)/);
+    if (match) {
+      timestamp = match[1] || "";
+      message = match[2] || "";
+      if (timestamp && timestamp.includes("via ")) {
+        const parts = timestamp.split("via ");
+        const part0 = parts[0];
+        const part1 = parts[1];
+        if (part0 !== undefined && part1 !== undefined) {
+          timestamp = part0.trim();
+          sender = `🤖 DeepSeek AI Draft (${part1.trim()})`;
+        }
+      }
+    }
+    return { sender, timestamp, message, align, bg, border, textColor, borderRadius, isDraft: true };
   } else if (rawReply.includes("[Instant AI Update]")) {
     sender = "🤖 JOT Logistics AI Assistant";
     align = "flex-end";
@@ -120,7 +143,7 @@ const parseReply = (rawReply: string) => {
     message = rawReply.replace("[Instant AI Update]", "").trim();
   }
 
-  return { sender, timestamp, message, align, bg, border, textColor, borderRadius };
+  return { sender, timestamp, message, align, bg, border, textColor, borderRadius, isDraft: false };
 };
 
 // Detect and safely render HTML message bodies
@@ -180,6 +203,7 @@ export default function ZohoTicketsPage() {
   const [replyText, setReplyText] = useState("");
   const [selectedFromEmail, setSelectedFromEmail] = useState("");
   const [replying, setReplying] = useState(false);
+  const [aiDraftLoading, setAiDraftLoading] = useState(false);
 
   // Manual ticket creation states
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -472,6 +496,43 @@ export default function ZohoTicketsPage() {
     }
     
     setReplyText(draft);
+  };
+    
+  const hasAiDraft = (ticket: Ticket): boolean => {
+    return getTicketReplies(ticket).some((r) => r.startsWith("[AI Draft"));
+  };
+
+  const handleGenerateAiDraft = async () => {
+    if (!activeTicket) return;
+    setAiDraftLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/oms/ai/compose-reply`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer_email: activeTicket.customer_email,
+          customer_name: activeTicket.customer_name,
+          message: activeTicket.message,
+          subject: activeTicket.subject
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.replyText) {
+          setReplyText(data.replyText);
+          alert(`✨ AI draft composed using ${data.modelUsed} (${data.ordersMatched} order(s) matched) and inserted into reply editor!`);
+        } else {
+          alert("No matching orders found in database for this customer email.");
+        }
+      } else {
+        alert("Failed to contact AI composer service.");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("Error generating AI draft.");
+    } finally {
+      setAiDraftLoading(false);
+    }
   };
 
   // Filter Tickets
@@ -1219,8 +1280,40 @@ export default function ZohoTicketsPage() {
                   </div>
                 </div>
 
-                {/* AI Rules Classifier Alert */}
-                {matchesAutoReplyRule(activeTicket) ? (
+                {/* AI Rules & Draft Classifier Alert */}
+                {hasAiDraft(activeTicket) ? (
+                  <div style={{ background: "#fefce8", border: "1px solid #fde047", padding: "10px 12px", borderRadius: "8px", color: "#854d0e", fontSize: "12px", display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "12px", flexShrink: 0, flexWrap: "wrap", gap: "8px" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <span>🤖</span>
+                      <div>
+                        <strong>DeepSeek AI Draft Available</strong>: Contextual reply draft auto-composed with customer's live tracking data.
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const draft = getTicketReplies(activeTicket).find(r => r.startsWith("[AI Draft"));
+                        if (draft) {
+                          const parsed = parseReply(draft);
+                          setReplyText(parsed.message);
+                        }
+                      }}
+                      style={{
+                        padding: "4px 10px",
+                        background: "#ca8a04",
+                        color: "#ffffff",
+                        border: "none",
+                        borderRadius: "6px",
+                        fontSize: "11px",
+                        fontWeight: "bold",
+                        cursor: "pointer",
+                        whiteSpace: "nowrap"
+                      }}
+                    >
+                      ⚡ Insert Draft into Reply
+                    </button>
+                  </div>
+                ) : matchesAutoReplyRule(activeTicket) ? (
                   <div style={{ background: "#f0fdf4", border: "1px solid #bbf7d0", padding: "10px 12px", borderRadius: "8px", color: "#166534", fontSize: "12px", display: "flex", alignItems: "center", gap: "8px", marginBottom: "12px", flexShrink: 0 }}>
                     <span>🤖</span>
                     <div>
@@ -1277,6 +1370,32 @@ export default function ZohoTicketsPage() {
                           )}
                         </div>
                         <MessageBody content={parsed.message} />
+                        {parsed.isDraft && (
+                          <div style={{ marginTop: "10px", paddingTop: "8px", borderTop: "1px dashed #facc15", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "8px" }}>
+                            <span style={{ fontSize: "11px", fontWeight: "600", color: "#a16207" }}>
+                              ⚡ Draft ready for review
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setReplyText(parsed.message)}
+                              style={{
+                                padding: "4px 10px",
+                                background: "#ca8a04",
+                                color: "#ffffff",
+                                border: "none",
+                                borderRadius: "6px",
+                                fontSize: "11px",
+                                fontWeight: "bold",
+                                cursor: "pointer",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "4px"
+                              }}
+                            >
+                              📝 Use This Draft
+                            </button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -1305,8 +1424,16 @@ export default function ZohoTicketsPage() {
                     </div>
 
                     {/* Email templates quick buttons */}
-                    <div style={{ display: "flex", gap: "4px", alignItems: "center" }}>
+                    <div style={{ display: "flex", gap: "4px", alignItems: "center", flexWrap: "wrap" }}>
                       <span style={{ fontSize: "10px", fontWeight: "bold", color: "var(--text-secondary)" }}>📄 TEMPLATES:</span>
+                      <button
+                        type="button"
+                        onClick={handleGenerateAiDraft}
+                        disabled={aiDraftLoading}
+                        style={{ padding: "3px 8px", background: "#fef08a", border: "1px solid #eab308", borderRadius: "4px", fontSize: "10px", fontWeight: "bold", cursor: "pointer", color: "#854d0e", display: "flex", alignItems: "center", gap: "3px" }}
+                      >
+                        {aiDraftLoading ? "⏳ Drafting..." : "✨ DeepSeek AI Draft"}
+                      </button>
                       <button
                         type="button"
                         onClick={() => handleSelectTemplate("shipping")}

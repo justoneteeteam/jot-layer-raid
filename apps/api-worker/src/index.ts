@@ -20,16 +20,66 @@ import {
   pinterestTrends,
   pinterestPrompts,
   pinterestThemes,
-  pinterestHistory
+  pinterestHistory,
+  pinterestNiches,
+  pinterestContentTypes,
+  pinterestRecipes,
+  pinterestThemeStyles,
+  syncedProducts,
+  marketingContacts,
+  emailTemplates,
+  marketingCampaigns,
+  campaignSends,
+  financialTransactions,
+  financialSettings
 } from "./db/schema";
 import { uploadToR2, getFromR2, deleteFromR2 } from "./services/r2-storage";
+import {
+  initFinancialTables,
+  generatePLReport,
+  getFinancialTransactions,
+  createFinancialTransaction,
+  updateFinancialTransaction,
+  deleteFinancialTransaction,
+  getDebtSummary,
+  DEFAULT_CATEGORIES
+} from "./services/financials";
 import { generateJersey } from "./services/image-engine";
 import { generatePinterestCreative, generatePinterestSEO, generateFileName } from "./services/pinterest-ai";
 import { buildPinterestRSSFeed } from "./services/rss-service";
-import { runAutoPilotBatch, DEFAULT_CHANNELS } from "./services/autopilot";
+import {
+  generateNicheLibrary,
+  validateNicheLibrary,
+  saveApprovedNiche
+} from "./services/niche-generator";
+import { cacheResponse, invalidateCache } from "./services/cache";
+import {
+  runAutoPilotBatch,
+  runRecurringBatches,
+  DEFAULT_CHANNELS,
+  getActiveChannels,
+  cancelJob,
+  deleteChannel,
+  deleteQueueJob,
+  getActiveQueueJobs,
+  getQueueHistory
+} from "./services/autopilot";
 import bcrypt from "bcryptjs";
 import { sign } from "hono/jwt";
 import { syncOrders } from "./services/oms-sync";
+import { extractFromPdfBuffer, matchLabelWithOrders } from "./services/wechat-service";
+import {
+  isShippingInquiry,
+  composeShippingReply,
+  handleAiDraftReply
+} from "./services/ai-email-composer.js";
+import {
+  initMarketingTables,
+  scanEmail,
+  syncMarketingContacts,
+  sendCampaignDripBatch,
+  runDailyMarketingDrip
+} from "./services/marketing-service.js";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -37,7 +87,7 @@ const app = new Hono<{ Bindings: Env }>();
 app.use("*", cors({
   origin: "*",
   allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowHeaders: ["Content-Type", "Authorization"]
+  allowHeaders: ["Content-Type", "Authorization", "Cache-Control", "Pragma", "Expires", "X-Requested-With"]
 }));
 
 // Authentication Routes
@@ -803,52 +853,57 @@ async function processAstroOrderWebhook(c: any) {
     const shippingStatus = body.shipping_status || body.shippingStatus || "placed";
     const trackingNumber = body.tracking_number || body.trackingNumber || "";
 
-    const existing = await db.select()
-      .from(orders)
-      .where(and(eq(orders.orderId, orderId), eq(orders.productName, productName)))
-      .limit(1);
-
-    if (existing.length === 0) {
-      const inserted = await db.insert(orders).values({
-        storeId,
-        orderId,
-        orderName,
+    const inserted = await db.insert(orders).values({
+      storeId,
+      orderId,
+      orderName,
+      customerName,
+      customerAddress,
+      customerEmail,
+      productName,
+      productImage,
+      quantity,
+      variant,
+      variantValue,
+      revenue,
+      cost,
+      shippingStatus,
+      trackingNumber,
+      emailSent: false,
+      trackingEmailSent: false,
+      createdAt: body.created_at || new Date().toISOString(),
+      syncedAt: new Date().toISOString()
+    })
+    .onConflictDoUpdate({
+      target: [orders.storeId, orders.orderId, orders.productName, orders.variant],
+      set: {
         customerName,
         customerAddress,
         customerEmail,
-        productName,
-        productImage,
         quantity,
-        variant,
-        variantValue,
         revenue,
         cost,
-        shippingStatus,
-        trackingNumber,
-        emailSent: false,
-        trackingEmailSent: false,
-        createdAt: body.created_at || new Date().toISOString(),
+        variantValue,
         syncedAt: new Date().toISOString()
-      }).returning();
-
-      if (productName) {
-        try {
-          await db.insert(syncedProducts).values({
-            name: productName,
-            platformProductId: body.product_id || body.productId || `prod_${Date.now()}`,
-            platform: "astro",
-            imageUrl: productImage,
-            price: revenue,
-            sku: body.sku || body.product_slug || "AST-SKU",
-            createdAt: new Date().toISOString()
-          });
-        } catch (_) {}
       }
+    })
+    .returning();
 
-      return c.json({ status: "ok", message: "Astro order received and stored.", order: mapOrderToSnakeCase(inserted[0]) });
-    } else {
-      return c.json({ status: "ok", message: "Astro order already exists.", order_id: orderId });
+    if (productName) {
+      try {
+        await db.insert(syncedProducts).values({
+          name: productName,
+          platformProductId: body.product_id || body.productId || `prod_${Date.now()}`,
+          platform: "astro",
+          imageUrl: productImage,
+          price: revenue,
+          sku: body.sku || body.product_slug || "AST-SKU",
+          createdAt: new Date().toISOString()
+        });
+      } catch (_) {}
     }
+
+    return c.json({ status: "ok", message: "Astro order received and stored.", order: mapOrderToSnakeCase(inserted[0]) });
   }
 
   c.executionCtx.waitUntil(syncOrders(c.env, "astro"));
@@ -1043,7 +1098,23 @@ app.post("/api/oms/orders", async (c) => {
     syncedAt: new Date().toISOString()
   };
 
-  const inserted = await db.insert(orders).values(newOrder).returning();
+  const inserted = await db.insert(orders).values(newOrder)
+    .onConflictDoUpdate({
+      target: [orders.storeId, orders.orderId, orders.productName, orders.variant],
+      set: {
+        customerName,
+        customerAddress,
+        customerEmail,
+        quantity,
+        revenue,
+        cost,
+        shippingStatus,
+        trackingNumber,
+        variantValue,
+        syncedAt: new Date().toISOString()
+      }
+    })
+    .returning();
 
   if (productName) {
     try {
@@ -1215,6 +1286,375 @@ app.post("/api/oms/orders/:order_id/resend", async (c) => {
   return c.json({ status: "ok", new_order_id: newOrderId });
 });
 
+// ── Financials & Profit & Loss (P&L) Reporting ──────────────────────────────
+
+// 1. Get P&L Financial Report for a Year
+app.get("/api/oms/financials/report", async (c) => {
+  try {
+    const yearParam = c.req.query("year");
+    const rateParam = c.req.query("exchange_rate");
+    const currentYear = new Date().getFullYear();
+    const year = yearParam ? parseInt(yearParam, 10) : currentYear;
+    const exchangeRate = rateParam ? parseFloat(rateParam) : undefined;
+
+    const report = await generatePLReport(c.env.DB, year, exchangeRate);
+    return c.json(report);
+  } catch (err: any) {
+    console.error("Error generating P&L report:", err);
+    return c.json({ error: err.message || "Failed to generate P&L report" }, 500);
+  }
+});
+
+// 2. Get Financial Transactions (List & Filter)
+app.get("/api/oms/financials/transactions", async (c) => {
+  try {
+    const type = c.req.query("type");
+    const category = c.req.query("category");
+    const year = c.req.query("year") ? parseInt(c.req.query("year")!, 10) : undefined;
+    const month = c.req.query("month") ? parseInt(c.req.query("month")!, 10) : undefined;
+    const debtStatus = c.req.query("debt_status");
+    const search = c.req.query("search");
+    const limit = c.req.query("limit") ? parseInt(c.req.query("limit")!, 10) : 100;
+    const offset = c.req.query("offset") ? parseInt(c.req.query("offset")!, 10) : 0;
+
+    const transactions = await getFinancialTransactions(c.env.DB, {
+      type,
+      category,
+      year,
+      month,
+      debtStatus,
+      search,
+      limit,
+      offset
+    });
+    return c.json(transactions);
+  } catch (err: any) {
+    console.error("Error fetching financial transactions:", err);
+    return c.json({ error: err.message || "Failed to fetch transactions" }, 500);
+  }
+});
+
+// 3. Create Financial Transaction (Cost, Revenue, Debt)
+app.post("/api/oms/financials/transactions", async (c) => {
+  try {
+    const body = await c.req.json();
+    const result = await createFinancialTransaction(c.env.DB, {
+      type: body.type,
+      category: body.category,
+      amount: parseFloat(body.amount || 0),
+      inputCurrency: body.input_currency || body.inputCurrency || "VND",
+      exchangeRate: body.exchange_rate || body.exchangeRate ? parseFloat(body.exchange_rate || body.exchangeRate) : undefined,
+      transactionDate: body.transaction_date || body.transactionDate,
+      note: body.note,
+      event: body.event,
+      imageProofUrl: body.image_proof_url || body.imageProofUrl,
+      isRecurring: Boolean(body.is_recurring ?? body.isRecurring),
+      repeatFrequency: body.repeat_frequency || body.repeatFrequency || "none",
+      repeatUntil: body.repeat_until || body.repeatUntil,
+      isExcludedFromReport: Boolean(body.is_excluded_from_report ?? body.isExcludedFromReport),
+      debtStatus: body.debt_status || body.debtStatus,
+      debtCounterparty: body.debt_counterparty || body.debtCounterparty,
+      debtDueDate: body.debt_due_date || body.debtDueDate
+    });
+    return c.json({ status: "ok", transaction: result });
+  } catch (err: any) {
+    console.error("Error creating financial transaction:", err);
+    return c.json({ error: err.message || "Failed to create transaction" }, 500);
+  }
+});
+
+// 4. Update Financial Transaction
+app.put("/api/oms/financials/transactions/:id", async (c) => {
+  try {
+    const id = parseInt(c.req.param("id"), 10);
+    const body = await c.req.json();
+    const result = await updateFinancialTransaction(c.env.DB, id, {
+      type: body.type,
+      category: body.category,
+      amount: body.amount !== undefined ? parseFloat(body.amount) : undefined,
+      inputCurrency: body.input_currency || body.inputCurrency,
+      exchangeRate: body.exchange_rate || body.exchangeRate ? parseFloat(body.exchange_rate || body.exchangeRate) : undefined,
+      transactionDate: body.transaction_date || body.transactionDate,
+      note: body.note,
+      event: body.event,
+      imageProofUrl: body.image_proof_url || body.imageProofUrl,
+      isRecurring: body.is_recurring !== undefined ? Boolean(body.is_recurring) : (body.isRecurring !== undefined ? Boolean(body.isRecurring) : undefined),
+      repeatFrequency: body.repeat_frequency || body.repeatFrequency,
+      repeatUntil: body.repeat_until || body.repeatUntil,
+      isExcludedFromReport: body.is_excluded_from_report !== undefined ? Boolean(body.is_excluded_from_report) : (body.isExcludedFromReport !== undefined ? Boolean(body.isExcludedFromReport) : undefined),
+      debtStatus: body.debt_status || body.debtStatus,
+      debtCounterparty: body.debt_counterparty || body.debtCounterparty,
+      debtDueDate: body.debt_due_date || body.debtDueDate
+    });
+    return c.json({ status: "ok", transaction: result });
+  } catch (err: any) {
+    console.error("Error updating transaction:", err);
+    return c.json({ error: err.message || "Failed to update transaction" }, 500);
+  }
+});
+
+// 5. Delete Financial Transaction
+app.delete("/api/oms/financials/transactions/:id", async (c) => {
+  try {
+    const id = parseInt(c.req.param("id"), 10);
+    const result = await deleteFinancialTransaction(c.env.DB, id);
+    return c.json(result);
+  } catch (err: any) {
+    console.error("Error deleting transaction:", err);
+    return c.json({ error: err.message || "Failed to delete transaction" }, 500);
+  }
+});
+
+// 6. Upload Receipt / Image Proof to R2
+app.post("/api/oms/financials/upload-proof", async (c) => {
+  try {
+    const formData = await c.req.formData();
+    const file = formData.get("file") as File;
+    if (!file) {
+      return c.json({ error: "No file provided" }, 400);
+    }
+    const arrayBuffer = await file.arrayBuffer();
+    const ext = file.name.split(".").pop() || "png";
+    const key = `receipts/${Date.now()}_${Math.random().toString(36).substring(2, 9)}.${ext}`;
+    const contentType = file.type || "image/png";
+    const url = await uploadToR2(c.env, key, arrayBuffer, contentType);
+    return c.json({ status: "ok", url, key });
+  } catch (err: any) {
+    console.error("Error uploading receipt proof:", err);
+    return c.json({ error: err.message || "Failed to upload receipt proof" }, 500);
+  }
+});
+
+// 7. Get & Update Financial Settings
+app.get("/api/oms/financials/settings", async (c) => {
+  try {
+    await initFinancialTables(c.env.DB);
+    const db = drizzle(c.env.DB);
+    const settings = await db.select().from(financialSettings).limit(1);
+    return c.json(settings[0] || { defaultExchangeRate: 26000.0, companyName: "Just One Tee Group" });
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to get settings" }, 500);
+  }
+});
+
+app.put("/api/oms/financials/settings", async (c) => {
+  try {
+    await initFinancialTables(c.env.DB);
+    const db = drizzle(c.env.DB);
+    const body = await c.req.json();
+    const defaultExchangeRate = body.default_exchange_rate || body.defaultExchangeRate || 26000.0;
+    const companyName = body.company_name || body.companyName || "Just One Tee Group";
+
+    await db
+      .insert(financialSettings)
+      .values({
+        id: 1,
+        defaultExchangeRate: parseFloat(defaultExchangeRate),
+        companyName,
+        updatedAt: new Date().toISOString()
+      })
+      .onConflictDoUpdate({
+        target: financialSettings.id,
+        set: {
+          defaultExchangeRate: parseFloat(defaultExchangeRate),
+          companyName,
+          updatedAt: new Date().toISOString()
+        }
+      });
+
+    return c.json({ status: "ok", defaultExchangeRate, companyName });
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to update settings" }, 500);
+  }
+});
+
+// 8. Debt Summary Tracker
+app.get("/api/oms/financials/debts", async (c) => {
+  try {
+    const summary = await getDebtSummary(c.env.DB);
+    return c.json(summary);
+  } catch (err: any) {
+    return c.json({ error: err.message || "Failed to get debt summary" }, 500);
+  }
+});
+
+// 9. Categories List
+app.get("/api/oms/financials/categories", async (c) => {
+  return c.json({ categories: DEFAULT_CATEGORIES });
+});
+
+// ── WeChat Logistics & PDF Tracking Extraction ──────────────────────────────
+
+// 1. Upload WeChat PDF Shipping Labels & Extract / Auto-Match
+app.post("/api/oms/wechat/upload", async (c) => {
+  try {
+    const formData = await c.req.formData();
+    const files = formData.getAll("files");
+
+    if (!files || files.length === 0) {
+      return c.json({ error: "No PDF files provided." }, 400);
+    }
+
+    const db = drizzle(c.env.DB);
+    const allDbOrders = await db
+      .select({
+        id: orders.id,
+        orderId: orders.orderId,
+        orderName: orders.orderName,
+        customerName: orders.customerName,
+        customerEmail: orders.customerEmail,
+        customerAddress: orders.customerAddress,
+        productName: orders.productName,
+        quantity: orders.quantity,
+        variant: orders.variant,
+        trackingNumber: orders.trackingNumber,
+        shippingStatus: orders.shippingStatus,
+        createdAt: orders.createdAt,
+      })
+      .from(orders);
+
+    const results = [];
+    for (const fileItem of files) {
+      if (typeof fileItem === "object" && "arrayBuffer" in fileItem) {
+        const file = fileItem as File;
+        const filename = file.name || "label.pdf";
+        const buffer = await file.arrayBuffer();
+        const extractedList = await extractFromPdfBuffer(buffer, filename);
+        for (const extracted of extractedList) {
+          const match = matchLabelWithOrders(extracted, allDbOrders);
+          results.push(match);
+        }
+      }
+    }
+
+    return c.json(results);
+  } catch (err: any) {
+    console.error("Error in /api/oms/wechat/upload:", err);
+    return c.json({ error: "Failed to process WeChat PDF labels", detail: err?.message || String(err) }, 500);
+  }
+});
+
+// 2. Scan WeChat Folder Fallback
+app.post("/api/oms/wechat/scan", async (c) => {
+  return c.json(
+    {
+      error: "Local desktop folder scan is only available in local agent mode. Please use the Drag & Drop PDF uploader to upload your WeChat PDF labels directly."
+    },
+    400
+  );
+});
+
+// 3. Synchronize Matched Tracking Numbers & Dispatch Shipping Announcement Emails
+app.post("/api/oms/wechat/sync", async (c) => {
+  try {
+    const body = await c.req.json();
+    const items: Array<{ order_id: string | number; tracking_number: string }> = Array.isArray(body)
+      ? body
+      : [body];
+
+    if (!items || items.length === 0) {
+      return c.json({ error: "No matches provided to sync." }, 400);
+    }
+
+    const db = drizzle(c.env.DB);
+    let updatedOrdersCount = 0;
+    const notifiedEmails: string[] = [];
+
+    for (const item of items) {
+      if (!item.order_id || !item.tracking_number) continue;
+
+      let matchedOrders: any[] = [];
+      const numericId = typeof item.order_id === "number" ? item.order_id : parseInt(String(item.order_id), 10);
+
+      if (!isNaN(numericId)) {
+        // Try finding by internal database ID
+        matchedOrders = await db.select().from(orders).where(eq(orders.id, numericId));
+      }
+
+      if (matchedOrders.length === 0) {
+        // Try finding by orderId string
+        matchedOrders = await db.select().from(orders).where(eq(orders.orderId, String(item.order_id)));
+      }
+
+      if (matchedOrders.length === 0) continue;
+
+      const trackingNum = item.tracking_number.trim();
+      const firstOrder = matchedOrders[0];
+
+      // If the matched order has an orderId, update all line items sharing that orderId
+      if (firstOrder.orderId) {
+        matchedOrders = await db.select().from(orders).where(eq(orders.orderId, firstOrder.orderId));
+      }
+
+      // Update all matching order records in D1
+      for (const ord of matchedOrders) {
+        await db
+          .update(orders)
+          .set({
+            trackingNumber: trackingNum,
+            shippingStatus: "in transit",
+            trackingEmailSent: true,
+            emailSent: true,
+          })
+          .where(eq(orders.id, ord.id));
+      }
+
+      updatedOrdersCount++;
+
+      // Dispatch Shipping Announcement Email to customer
+      if (firstOrder.customerEmail && !notifiedEmails.includes(firstOrder.customerEmail.toLowerCase())) {
+        try {
+          const storeIdLower = (firstOrder.storeId || "").toLowerCase();
+          let fromEmail = "contact@vulius.com";
+          let fromName = "Vulius Support";
+          let brandName = "Vulius";
+
+          if (!storeIdLower.includes("vulius")) {
+            fromEmail = "contact@wairaiders.com";
+            fromName = "WaiRaiders Support";
+            brandName = "WaiRaiders";
+          }
+
+          const orderNumDisplay = firstOrder.orderId || firstOrder.id;
+          const subject = `Great news! Your order #${orderNumDisplay} has been shipped 🚀`;
+          const track17Url = `https://www.17track.net/en/track?nums=${encodeURIComponent(trackingNum)}`;
+
+          const bodyHtml = `
+            <p>Dear ${firstOrder.customerName || "Valued Customer"},</p>
+            <p>Great news! Your order <strong>#${orderNumDisplay}</strong> from <strong>${brandName}</strong> has been shipped and is now on its way.</p>
+            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 16px 0;">
+              <p style="margin: 0 0 6px 0; font-size: 13px; color: #64748b; text-transform: uppercase; font-weight: bold; letter-spacing: 0.05em;">Carrier Tracking Number</p>
+              <p style="margin: 0; font-size: 18px; font-weight: bold; font-family: 'Courier New', Courier, monospace; color: #0f172a;">${trackingNum}</p>
+            </div>
+            <p>You can track the live delivery progress of your package on 17Track:</p>
+            <p style="margin: 16px 0;">
+              <a href="${track17Url}" target="_blank" style="display: inline-block; background: #0f172a; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 14px;">Track Package on 17Track &rarr;</a>
+            </p>
+            <p style="margin-top: 24px; font-size: 13px; color: #64748b;">If you have any questions or need assistance, simply reply directly to this email.</p>
+          `;
+
+          c.executionCtx.waitUntil(
+            sendOutboundEmail(firstOrder.customerEmail, subject, bodyHtml, fromEmail, fromName, c.env)
+          );
+
+          notifiedEmails.push(firstOrder.customerEmail.toLowerCase());
+        } catch (mailErr) {
+          console.error(`Failed to dispatch shipping announcement email for order ${firstOrder.orderId}:`, mailErr);
+        }
+      }
+    }
+
+    return c.json({
+      success: true,
+      count: updatedOrdersCount,
+      message: `Successfully synchronized ${updatedOrdersCount} order(s) to "in transit" and dispatched shipping announcement emails.`
+    });
+  } catch (err: any) {
+    console.error("Error in /api/oms/wechat/sync:", err);
+    return c.json({ error: "Failed to sync WeChat tracking numbers", detail: err?.message || String(err) }, 500);
+  }
+});
+
 // ── Store Connection Routes ──────────────────────────────────────────────────
 
 // 1. List connected stores
@@ -1226,6 +1666,7 @@ app.get("/api/stores", async (c) => {
     name: s.name,
     platform: s.platform,
     url: s.url,
+    webhook_url: s.webhookUrl || (s.platform?.toLowerCase() === "astro" ? "https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro" : null),
     is_active: s.isActive,
     apiKey: s.apiKey ? `${s.apiKey.slice(0, 3)}••••••` : "••••••",
     apiSecret: "••••••",
@@ -1237,22 +1678,37 @@ app.get("/api/stores", async (c) => {
 // 2. Create a new store connection
 app.post("/api/stores", async (c) => {
   const db = drizzle(c.env.DB);
-  const body = await c.req.json();
+  let body: any = {};
+  try {
+    body = await c.req.json();
+  } catch (e) {
+    try {
+      body = await c.req.parseBody();
+    } catch (e2) {}
+  }
   
+  const platform = (body.platform || "woocommerce").toLowerCase();
+  const webhookUrl = body.webhook_url || body.webhookUrl || (platform === "astro" ? "https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro" : null);
+  const apiKey = body.api_key || (platform === "astro" ? `astro_${Date.now()}` : "");
+  const apiSecret = body.api_secret || (platform === "astro" ? `astro_sec_${Date.now()}` : "");
+
   const result = await db.insert(stores).values({
     name: body.name,
-    platform: body.platform.toLowerCase(),
-    url: body.url.replace(/\/$/, ""),
-    apiKey: body.api_key,
-    apiSecret: body.api_secret,
+    platform: platform,
+    url: (body.url || "").replace(/\/$/, ""),
+    apiKey: apiKey,
+    apiSecret: apiSecret,
+    webhookUrl: webhookUrl,
     isActive: true,
     createdAt: new Date().toISOString()
   }).returning();
 
+  const s = result[0];
   return c.json({
-    id: result[0].id,
-    name: result[0].name,
-    platform: result[0].platform
+    id: s?.id,
+    name: s?.name,
+    platform: s?.platform,
+    webhook_url: s?.webhookUrl
   });
 });
 
@@ -1267,6 +1723,8 @@ app.put("/api/stores/:id", async (c) => {
   if (body.url !== undefined) updates.url = body.url.replace(/\/$/, "");
   if (body.api_key !== undefined) updates.apiKey = body.api_key;
   if (body.api_secret !== undefined) updates.apiSecret = body.api_secret;
+  if (body.webhook_url !== undefined) updates.webhookUrl = body.webhook_url;
+  if (body.webhookUrl !== undefined) updates.webhookUrl = body.webhookUrl;
 
   await db.update(stores)
     .set(updates)
@@ -1694,6 +2152,13 @@ app.post("/api/oms/webhook/email/inbound", async (c) => {
       `👉 <a href="https://jot-layer-raid-web.pages.dev/oms/tickets">Open Support Dashboard</a>`;
     c.executionCtx.waitUntil(notifyTelegram(telegramMessage, c.env));
 
+    // ── AI Draft Generation for Customer Reply on Existing Ticket ──
+    if (!checkIsSpam(sender, subject, bodyText, true) && isShippingInquiry(subject, bodyText)) {
+      c.executionCtx.waitUntil(
+        handleAiDraftReply(existingTicket.id, sender, senderName, bodyText, subject, c.env)
+      );
+    }
+
     return c.json({
       status: "success",
       message: `Appended message to active support ticket ID ${existingTicket.id}.`,
@@ -1720,7 +2185,7 @@ app.post("/api/oms/webhook/email/inbound", async (c) => {
       createdAt: new Date().toISOString()
     }).returning();
 
-    const newTicket = result[0];
+    const newTicket = result[0]!;
 
     const escapedSnippet = bodyText.slice(0, 300).replace(/</g, "&lt;").replace(/>/g, "&gt;");
     const telegramMessage = `📥 <b>[New Support Ticket #${newTicket.id}]</b>\n` +
@@ -1729,6 +2194,13 @@ app.post("/api/oms/webhook/email/inbound", async (c) => {
       `<blockquote>${escapedSnippet}</blockquote>\n\n` +
       `👉 <a href="https://jot-layer-raid-web.pages.dev/oms/tickets">Open Support Dashboard</a>`;
     c.executionCtx.waitUntil(notifyTelegram(telegramMessage, c.env));
+
+    // ── AI Draft Generation for New Inbound Ticket ──
+    if (!isSpam && isShippingInquiry(subject, bodyText)) {
+      c.executionCtx.waitUntil(
+        handleAiDraftReply(newTicket.id, sender, senderName, bodyText, subject, c.env)
+      );
+    }
 
     return c.json({
       status: "success",
@@ -1811,6 +2283,393 @@ app.delete("/api/marketing/senders/:id", async (c) => {
   const db = drizzle(c.env.DB);
   await db.delete(emailSenderIdentities).where(eq(emailSenderIdentities.id, id));
   return c.json({ status: "ok", message: "Sender configuration removed." });
+});
+
+// ── Outbound Email Marketing Routes (Contacts, Templates, Campaigns) ─────────
+
+// 4. Scan Single Email for Deliverability & Spam Traps
+app.post("/api/marketing/scan-email", async (c) => {
+  const body = await c.req.json();
+  const email = body.email || "";
+  const scan = await scanEmail(email);
+  return c.json({
+    email,
+    is_valid: scan.isValid,
+    reason: scan.reason || null
+  });
+});
+
+// 5. List Marketing Contacts (supports pagination & store filtering)
+app.get("/api/marketing/contacts", async (c) => {
+  try {
+    await initMarketingTables(c.env.DB);
+    const db = drizzle(c.env.DB);
+
+    const page = parseInt(c.req.query("page") || "1", 10);
+    const limit = parseInt(c.req.query("limit") || "50", 10);
+    const storeId = c.req.query("store_id");
+    const offset = (page - 1) * limit;
+
+    let query = db.select().from(marketingContacts);
+    if (storeId && storeId !== "all") {
+      query = query.where(eq(marketingContacts.storeId, storeId)) as any;
+    }
+
+    const allContacts = await query;
+    const total = allContacts.length;
+    const validCount = allContacts.filter(c => c.isValid).length;
+    const invalidCount = total - validCount;
+
+    const paginated = allContacts.slice(offset, offset + limit).map(c => ({
+      id: c.id,
+      store_id: c.storeId,
+      email: c.email,
+      first_name: c.firstName,
+      last_name: c.lastName,
+      consent_status: c.consentStatus,
+      consent_source: c.consentSource,
+      is_valid: Boolean(c.isValid),
+      validation_note: c.validationNote,
+      created_at: c.createdAt
+    }));
+
+    if (c.req.query("page") || c.req.query("limit")) {
+      return c.json({
+        contacts: paginated,
+        total,
+        valid_count: validCount,
+        invalid_count: invalidCount,
+        page,
+        limit,
+        pages: Math.ceil(total / limit) || 1
+      });
+    }
+
+    return c.json(paginated);
+  } catch (err: any) {
+    console.error("Error in GET /api/marketing/contacts:", err);
+    return c.json({ error: err?.message || String(err), contacts: [], total: 0 }, 500);
+  }
+});
+
+// 6. Bulk Sync / Import Marketing Contacts (with built-in email validity scanner)
+app.post("/api/marketing/contacts/sync", async (c) => {
+  try {
+    const body = await c.req.json();
+    const contactsList = body.contacts || [];
+    const storeId = body.store_id || "WaiRaiders Store";
+
+    if (!Array.isArray(contactsList) || contactsList.length === 0) {
+      return c.json({ error: "Missing or empty contacts list" }, 400);
+    }
+
+    const result = await syncMarketingContacts(c.env.DB, contactsList, storeId);
+    return c.json(result);
+  } catch (err: any) {
+    console.error("Error in POST /api/marketing/contacts/sync:", err);
+    return c.json({ error: err?.message || String(err), created: 0, updated: 0, invalid: 0, scan_results: [] }, 500);
+  }
+});
+
+// 7. Delete Marketing Contact
+app.delete("/api/marketing/contacts/:id", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  await db.delete(marketingContacts).where(eq(marketingContacts.id, id));
+  return c.json({ status: "ok", message: "Contact removed" });
+});
+
+// 8. List Email Templates
+app.get("/api/marketing/templates", async (c) => {
+  await initMarketingTables(c.env.DB);
+  const db = drizzle(c.env.DB);
+  let result = await db.select().from(emailTemplates);
+  
+  // Auto-seed default WaiRaiders templates if none exist
+  if (result.length === 0) {
+    const defaultTemplates = [
+      {
+        name: "🏈 WaiRaiders Custom Jersey Showcase & League Hub",
+        subject: "Customize Your Ultimate Game Jersey | Wairaiders Special",
+        storeId: "WaiRaiders Store",
+        bodyHtml: `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+<head>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Customize Your Ultimate Game Jersey | Wairaiders</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F4F6F8; font-family: sans-serif;">
+  <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #F4F6F8; padding: 20px 10px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #FFFFFF; border-radius: 12px; overflow: hidden; border: 1px solid #E2E8F0;">
+          <tr>
+            <td style="background-color: #004F2A; padding: 18px 24px; text-align: center;">
+              <span style="font-size: 22px; font-weight: 900; color: #FFFFFF;">wairaiders</span>
+            </td>
+          </tr>
+          <tr>
+            <td style="background: #006A38; padding: 32px 20px; text-align: center; color: #FFFFFF;">
+              <h1 style="margin: 0; font-size: 26px; font-weight: 900; text-transform: uppercase;">DESIGN YOUR ULTIMATE GAME DAY JERSEY</h1>
+              <p style="margin: 8px 0 20px 0; font-size: 14px; opacity: 0.9;">Custom Name & Number &bull; Moisture Wicking &bull; Only $84.00</p>
+              <div style="background: #FFFFFF; border-radius: 8px; padding: 16px; max-width: 320px; margin: 0 auto; border: 2px solid #FFB800;">
+                <img src="https://img.btdmp.com/10205/10205680/products/gexdembvgxCdamjygmCtgnrrgexdambqgaxdknjygxBtsobtguAdqnzzgexdooi.jpeg" alt="Custom Jersey" style="width: 100%; max-height: 240px; object-fit: contain; display: block; margin-bottom: 12px;" />
+                <a href="https://www.wairaiders.com/custom-nfl-jersey/" target="_blank" style="display: block; background: #CC0000; color: #FFFFFF; text-decoration: none; padding: 10px 16px; border-radius: 6px; font-weight: 800; font-size: 13px; text-transform: uppercase;">CUSTOMIZE YOURS NOW &rarr;</a>
+              </div>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding: 24px 20px; text-align: center; background: #FFFFFF;">
+              <h2 style="margin: 0 0 16px 0; font-size: 18px; font-weight: 800; text-transform: uppercase; color: #0F172A;">Featured Team Jerseys</h2>
+              <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+                <tr>
+                  <td width="48%" valign="top" style="border: 1px solid #E2E8F0; border-radius: 8px; padding: 12px; text-align: center;">
+                    <img src="https://img.btdmp.com/10205/10205680/products/gexdembvgxCdamjygmCtgnrrgexdambqgaxdknjygxBtsobtguAdqnzzgexdooi.jpeg" alt="Chiefs Jersey" style="width: 100%; max-height: 160px; object-fit: contain; margin-bottom: 8px;" />
+                    <div style="font-weight: 800; font-size: 13px; color: #0F172A;">Kansas City Chiefs Custom</div>
+                    <div style="font-size: 14px; font-weight: 900; color: #006A38; margin: 4px 0 8px 0;">$84.00</div>
+                    <a href="https://www.wairaiders.com/custom-kansas-city-chiefs-jersey/" target="_blank" style="display: inline-block; background: #006A38; color: #FFFFFF; padding: 6px 12px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: 700;">Customize &rarr;</a>
+                  </td>
+                  <td width="4%">&nbsp;</td>
+                  <td width="48%" valign="top" style="border: 1px solid #E2E8F0; border-radius: 8px; padding: 12px; text-align: center;">
+                    <img src="https://img.thesitebase.net/10205/10205680/products/1708326833357.jpg" alt="Cowboys Jersey" style="width: 100%; max-height: 160px; object-fit: contain; margin-bottom: 8px;" />
+                    <div style="font-weight: 800; font-size: 13px; color: #0F172A;">Dallas Cowboys Custom</div>
+                    <div style="font-size: 14px; font-weight: 900; color: #006A38; margin: 4px 0 8px 0;">$84.00</div>
+                    <a href="https://www.wairaiders.com/custom-cowboys-jersey/" target="_blank" style="display: inline-block; background: #006A38; color: #FFFFFF; padding: 6px 12px; border-radius: 4px; font-size: 11px; text-decoration: none; font-weight: 700;">Customize &rarr;</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="background-color: #004F2A; padding: 20px; text-align: center; color: #FFFFFF; font-size: 11px;">
+              &copy; 2026 Wairaiders Pro Athletics &bull; <a href="https://www.wairaiders.com/" target="_blank" style="color: #FFB800;">wairaiders.com</a>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`
+      },
+      {
+        name: "🚀 WaiRaiders Shipping & Live Tracking Announcement",
+        subject: "Great news! Your custom jersey has shipped 🚀 | WaiRaiders",
+        storeId: "WaiRaiders Store",
+        bodyHtml: `<!DOCTYPE html><html><body style="font-family:sans-serif;padding:20px;background:#F4F6F8;"><div style="max-width:600px;margin:0 auto;background:#fff;padding:24px;border-radius:8px;"><h2>Your Order is on the Way!</h2><p>Your custom jersey has been crafted and is currently in transit with live carrier tracking.</p></div></body></html>`
+      },
+      {
+        name: "👀 WaiRaiders Abandoned Cart Recovery (10% OFF)",
+        subject: "Did you leave your custom jersey behind? Take 10% OFF!",
+        storeId: "WaiRaiders Store",
+        bodyHtml: `<!DOCTYPE html><html><body style="font-family:sans-serif;padding:20px;background:#F4F6F8;"><div style="max-width:600px;margin:0 auto;background:#fff;padding:24px;border-radius:8px;"><h2>Complete Your Order</h2><p>Use code <strong>FINISH10</strong> for 10% off!</p></div></body></html>`
+      }
+    ];
+
+    for (const dt of defaultTemplates) {
+      await db.insert(emailTemplates).values({
+        name: dt.name,
+        subject: dt.subject,
+        storeId: dt.storeId,
+        bodyHtml: dt.bodyHtml,
+        createdAt: new Date().toISOString()
+      });
+    }
+
+    result = await db.select().from(emailTemplates);
+  }
+
+  return c.json(result.map(t => ({
+    id: t.id,
+    store_id: t.storeId,
+    name: t.name,
+    subject: t.subject,
+    body_html: t.bodyHtml,
+    created_at: t.createdAt
+  })));
+});
+
+// 9. Create or Update Email Template
+app.post("/api/marketing/templates", async (c) => {
+  await initMarketingTables(c.env.DB);
+  const db = drizzle(c.env.DB);
+  const body = await c.req.json();
+
+  if (!body.name || !body.subject || !body.body_html) {
+    return c.json({ error: "Missing required template fields (name, subject, body_html)" }, 400);
+  }
+
+  if (body.id) {
+    await db.update(emailTemplates).set({
+      name: body.name,
+      subject: body.subject,
+      bodyHtml: body.body_html,
+      storeId: body.store_id || "WaiRaiders Store"
+    }).where(eq(emailTemplates.id, body.id));
+    return c.json({ status: "ok", id: body.id, message: "Template updated" });
+  } else {
+    const res = await db.insert(emailTemplates).values({
+      name: body.name,
+      subject: body.subject,
+      bodyHtml: body.body_html,
+      storeId: body.store_id || "WaiRaiders Store",
+      createdAt: new Date().toISOString()
+    }).returning();
+    return c.json({ status: "ok", id: res[0]?.id, message: "Template created" });
+  }
+});
+
+// 10. Delete Email Template
+app.delete("/api/marketing/templates/:id", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  await db.delete(emailTemplates).where(eq(emailTemplates.id, id));
+  return c.json({ status: "ok", message: "Template removed" });
+});
+
+// 11. List Marketing Campaigns
+app.get("/api/marketing/campaigns", async (c) => {
+  await initMarketingTables(c.env.DB);
+  const db = drizzle(c.env.DB);
+  const result = await db.select().from(marketingCampaigns).orderBy(desc(marketingCampaigns.id));
+  const senders = await db.select().from(emailSenderIdentities);
+
+  const senderMap = new Map(senders.map(s => [s.id, s]));
+
+  return c.json(result.map(cmp => {
+    const sender = cmp.senderIdentityId ? senderMap.get(cmp.senderIdentityId) : null;
+    return {
+      id: cmp.id,
+      name: cmp.name,
+      subject: cmp.subject,
+      body_html: cmp.bodyHtml,
+      store_id: cmp.storeId,
+      sender_identity_id: cmp.senderIdentityId,
+      sender_name: sender?.fromName || null,
+      sender_email: sender?.fromEmail || null,
+      status: cmp.status,
+      sent_count: cmp.sentCount,
+      total_contacts: cmp.totalContacts,
+      daily_limit: cmp.dailyLimit || 20,
+      scheduled_at: cmp.scheduledAt,
+      created_at: cmp.createdAt
+    };
+  }));
+});
+
+// 12. Create or Update Marketing Campaign
+app.post("/api/marketing/campaigns", async (c) => {
+  await initMarketingTables(c.env.DB);
+  const db = drizzle(c.env.DB);
+  const body = await c.req.json();
+
+  if (!body.name || !body.subject || !body.body_html) {
+    return c.json({ error: "Missing required campaign fields (name, subject, body_html)" }, 400);
+  }
+
+  const senderId = body.sender_identity_id ? parseInt(body.sender_identity_id, 10) : null;
+  const dailyLimit = body.daily_limit ? parseInt(body.daily_limit, 10) : 20;
+
+  if (body.id) {
+    await db.update(marketingCampaigns).set({
+      name: body.name,
+      subject: body.subject,
+      bodyHtml: body.body_html,
+      storeId: body.store_id || "WaiRaiders Store",
+      senderIdentityId: senderId,
+      dailyLimit,
+      scheduledAt: body.scheduled_at || null
+    }).where(eq(marketingCampaigns.id, body.id));
+    return c.json({ status: "ok", id: body.id, message: "Campaign updated" });
+  } else {
+    const res = await db.insert(marketingCampaigns).values({
+      name: body.name,
+      subject: body.subject,
+      bodyHtml: body.body_html,
+      storeId: body.store_id || "WaiRaiders Store",
+      senderIdentityId: senderId,
+      status: body.scheduled_at ? "scheduled" : "draft",
+      sentCount: 0,
+      totalContacts: 0,
+      dailyLimit,
+      scheduledAt: body.scheduled_at || null,
+      createdAt: new Date().toISOString()
+    }).returning();
+    return c.json({ status: "ok", id: res[0]?.id, message: "Campaign created" });
+  }
+});
+
+// 13. Trigger Campaign Send (Drip Batch)
+app.post("/api/marketing/campaigns/:id/send", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  try {
+    const result = await sendCampaignDripBatch(c.env, id);
+    return c.json({
+      message: `Dispatched ${result.sent} emails (${result.failed} failed, ${result.suppressed} suppressed). Remaining in queue: ${result.remaining}`,
+      ...result
+    });
+  } catch (err: any) {
+    console.error(`Error sending campaign ${id}:`, err);
+    return c.json({ error: err.message || "Failed to trigger campaign send" }, 500);
+  }
+});
+
+// 14. Pause or Resume Campaign Drip
+app.post("/api/marketing/campaigns/:id/pause", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  await initMarketingTables(c.env.DB);
+  const db = drizzle(c.env.DB);
+
+  const campaign = (await db.select().from(marketingCampaigns).where(eq(marketingCampaigns.id, id)).limit(1))[0];
+  if (!campaign) {
+    return c.json({ error: "Campaign not found" }, 404);
+  }
+
+  const nextStatus = campaign.status === "sending" ? "paused" : "sending";
+  await db.update(marketingCampaigns).set({ status: nextStatus }).where(eq(marketingCampaigns.id, id));
+
+  return c.json({ status: nextStatus, message: `Campaign status changed to ${nextStatus}` });
+});
+
+// 15. Get Campaign Stats & Audit Trail
+app.get("/api/marketing/campaigns/:id/stats", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  await initMarketingTables(c.env.DB);
+  const db = drizzle(c.env.DB);
+
+  const campaign = (await db.select().from(marketingCampaigns).where(eq(marketingCampaigns.id, id)).limit(1))[0];
+  if (!campaign) {
+    return c.json({ error: "Campaign not found" }, 404);
+  }
+
+  const sends = await db.select().from(campaignSends).where(eq(campaignSends.campaignId, id)).orderBy(desc(campaignSends.id)).limit(100);
+
+  const sentCount = sends.filter(s => s.status === "sent").length;
+  const failedCount = sends.filter(s => s.status === "failed").length;
+  const suppressedCount = sends.filter(s => s.status === "suppressed").length;
+
+  return c.json({
+    id: campaign.id,
+    name: campaign.name,
+    status: campaign.status,
+    daily_limit: campaign.dailyLimit || 20,
+    total_contacts: campaign.totalContacts,
+    sent: campaign.sentCount || sentCount,
+    failed: failedCount,
+    suppressed: suppressedCount,
+    remaining: Math.max(0, (campaign.totalContacts || 0) - (campaign.sentCount || sentCount)),
+    recent_sends: sends.slice(0, 20)
+  });
+});
+
+// 16. Delete Marketing Campaign
+app.delete("/api/marketing/campaigns/:id", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const db = drizzle(c.env.DB);
+  await db.delete(campaignSends).where(eq(campaignSends.campaignId, id));
+  await db.delete(marketingCampaigns).where(eq(marketingCampaigns.id, id));
+  return c.json({ status: "ok", message: "Campaign deleted" });
 });
 
 // ── Database & Roster Endpoints (Teams, Players, CSV Import) ───────────────────
@@ -2019,6 +2878,7 @@ const DEFAULT_EMAIL_SETTINGS = {
   template_subject: "Instant AI Update regarding your order {order_id}",
   template_body: "Hi {customer_name},\n\n[Instant AI Update] This is an automated update regarding your order {order_id}.\nYour logistics shipping status is currently: {shipping_status}.\nTracking Number: {tracking_number}.\n\nYou can track your package directly on 17track here:\nhttps://www.17track.net/en/track?nums={tracking_number}\n\nThis response was triggered instantly by the JOT AI CRM rules engine.",
   auto_reply_enabled: true,
+  ai_auto_reply_enabled: true,
   cloudflare_account_id: "",
   cloudflare_api_token: ""
 };
@@ -2039,6 +2899,22 @@ app.post("/api/oms/settings/email", async (c) => {
   const payload = await c.req.json();
   await c.env.FONTS_CACHE_KV.put("email_settings", JSON.stringify(payload));
   return c.json({ status: "ok" });
+});
+
+// ── AI Email Compose Endpoint (On-demand AI Drafting) ─────────────────────────
+app.post("/api/oms/ai/compose-reply", async (c) => {
+  const body = await c.req.json();
+  const customerEmail = body.customer_email || body.email;
+  const customerName = body.customer_name || body.name;
+  const message = body.message || body.ticket_message || "";
+  const subject = body.subject || "";
+
+  if (!customerEmail) {
+    return c.json({ error: "customer_email is required" }, 400);
+  }
+
+  const result = await composeShippingReply(c.env, customerEmail, customerName, message, subject);
+  return c.json(result);
 });
 
 
@@ -2424,6 +3300,314 @@ async function queueHandler(batch: MessageBatch<any>, env: Env, ctx: ExecutionCo
 
 // ── Pinterest AI Studio Routes ──────────────────────────────────────────────
 
+// ── Pinterest Niche Library Routes ──────────────────────────────────────────
+
+// List Niches (with summary counts)
+app.get("/api/pinterest/niches", cacheResponse({ ttl: 60, tags: ["pinterest"] }), async (c) => {
+  const db = drizzle(c.env.DB);
+  const status = c.req.query("status");
+  const niches = status
+    ? await db.select().from(pinterestNiches).where(eq(pinterestNiches.status, status)).orderBy(desc(pinterestNiches.id))
+    : await db.select().from(pinterestNiches).orderBy(desc(pinterestNiches.id));
+
+  const enhancedNiches = await Promise.all(
+    niches.map(async (niche) => {
+      const themes = await db.select().from(pinterestThemes).where(eq(pinterestThemes.nicheId, niche.id));
+      const styles = await db.select().from(pinterestPrompts).where(eq(pinterestPrompts.nicheId, niche.id));
+      const contentTypes = await db.select().from(pinterestContentTypes).where(eq(pinterestContentTypes.nicheId, niche.id));
+      const recipes = await db.select().from(pinterestRecipes).where(eq(pinterestRecipes.nicheId, niche.id));
+      return {
+        ...niche,
+        counts: {
+          themes: themes.length,
+          styles: styles.length,
+          contentTypes: contentTypes.length,
+          recipes: recipes.length
+        }
+      };
+    })
+  );
+  return c.json(enhancedNiches);
+});
+
+// Generate AI Niche Library Draft via DeepSeek
+app.post("/api/pinterest/niches/generate", async (c) => {
+  try {
+    const body = await c.req.json();
+    if (!body.niche || typeof body.niche !== "string" || !body.niche.trim()) {
+      return c.json({ error: "Niche topic name is required" }, 400);
+    }
+
+    const draft = await generateNicheLibrary({
+      niche: body.niche.trim(),
+      audience: body.audience?.trim(),
+      language: body.language?.trim() || "English",
+      market: body.market?.trim() || "United States"
+    }, c.env);
+
+    const validation = validateNicheLibrary(draft);
+
+    // Save draft to KV with 24-hour TTL
+    if (c.env.FONTS_CACHE_KV) {
+      await c.env.FONTS_CACHE_KV.put(
+        `pinterest:niche-draft:${draft.draftId}`,
+        JSON.stringify({ draft, validation }),
+        { expirationTtl: 86400 }
+      );
+    }
+
+    return c.json({
+      ok: true,
+      draftId: draft.draftId,
+      draft,
+      validation
+    }, 201);
+  } catch (err: any) {
+    console.error("Generate niche library error:", err);
+    return c.json({ ok: false, error: err.message }, 500);
+  }
+});
+
+// Get Draft from KV
+app.get("/api/pinterest/niches/draft/:draftId", async (c) => {
+  const draftId = c.req.param("draftId");
+  const raw = await c.env.FONTS_CACHE_KV?.get(`pinterest:niche-draft:${draftId}`);
+  if (!raw) {
+    return c.json({ error: "Draft not found or expired (drafts expire after 24 hours)" }, 404);
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return c.json(parsed);
+  } catch (e: any) {
+    return c.json({ error: "Failed to parse draft payload" }, 500);
+  }
+});
+
+// Update Draft in KV
+app.put("/api/pinterest/niches/draft/:draftId", async (c) => {
+  const draftId = c.req.param("draftId");
+  const key = `pinterest:niche-draft:${draftId}`;
+  const existingRaw = await c.env.FONTS_CACHE_KV?.get(key);
+  if (!existingRaw) {
+    return c.json({ error: "Draft not found or expired" }, 404);
+  }
+  try {
+    const body = await c.req.json();
+    const updatedDraft = body.draft || body;
+    updatedDraft.draftId = draftId;
+    const validation = validateNicheLibrary(updatedDraft);
+    if (c.env.FONTS_CACHE_KV) {
+      await c.env.FONTS_CACHE_KV.put(
+        key,
+        JSON.stringify({ draft: updatedDraft, validation }),
+        { expirationTtl: 86400 }
+      );
+    }
+    return c.json({ ok: true, draft: updatedDraft, validation });
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
+});
+
+// Approve Draft and Persist to D1 Database
+app.post("/api/pinterest/niches/draft/:draftId/approve", async (c) => {
+  const draftId = c.req.param("draftId");
+  const key = `pinterest:niche-draft:${draftId}`;
+  const raw = await c.env.FONTS_CACHE_KV?.get(key);
+  if (!raw) {
+    return c.json({ error: "Draft not found or expired" }, 404);
+  }
+  try {
+    const { draft } = JSON.parse(raw);
+    const result = await saveApprovedNiche(draft, c.env);
+    await c.env.FONTS_CACHE_KV?.delete(key);
+    await invalidateCache(c, ["pinterest"]);
+    return c.json({
+      ok: true,
+      message: "Niche library approved and saved to database successfully",
+      ...result
+    }, 201);
+  } catch (e: any) {
+    console.error("Approve niche error:", e);
+    return c.json({ ok: false, error: e.message }, 500);
+  }
+});
+
+// Delete Draft from KV
+app.delete("/api/pinterest/niches/draft/:draftId", async (c) => {
+  const draftId = c.req.param("draftId");
+  await c.env.FONTS_CACHE_KV?.delete(`pinterest:niche-draft:${draftId}`);
+  return c.json({ ok: true, deleted: draftId });
+});
+
+// Get Niche Details by ID (Full content tree)
+app.get("/api/pinterest/niches/:id", cacheResponse({ ttl: 120, tags: ["pinterest"] }), async (c) => {
+  const id = parseInt(c.req.param("id"));
+  if (isNaN(id)) return c.json({ error: "Invalid niche ID" }, 400);
+
+  const db = drizzle(c.env.DB);
+  const [niche] = await db.select().from(pinterestNiches).where(eq(pinterestNiches.id, id)).limit(1);
+  if (!niche) return c.json({ error: "Niche not found" }, 404);
+
+  const contentTypes = await db.select().from(pinterestContentTypes).where(eq(pinterestContentTypes.nicheId, id));
+  const styles = await db.select().from(pinterestPrompts).where(eq(pinterestPrompts.nicheId, id));
+  const rawThemes = await db.select().from(pinterestThemes).where(eq(pinterestThemes.nicheId, id));
+  const recipes = await db.select().from(pinterestRecipes).where(eq(pinterestRecipes.nicheId, id));
+
+  const themes = await Promise.all(
+    rawThemes.map(async (t) => {
+      const junction = await db.select().from(pinterestThemeStyles).where(eq(pinterestThemeStyles.themeId, t.id));
+      const compatibleStyleIds = junction.map((j) => j.styleId);
+      const compatibleStyles = styles.filter((s) => compatibleStyleIds.includes(s.id));
+      return {
+        ...t,
+        compatibleStyles,
+        compatibleStyleNames: compatibleStyles.map((s) => s.name)
+      };
+    })
+  );
+
+  return c.json({
+    ...niche,
+    contentTypes,
+    themes,
+    styles,
+    recipes
+  });
+});
+
+// Update Niche by ID
+app.put("/api/pinterest/niches/:id", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  if (isNaN(id)) return c.json({ error: "Invalid niche ID" }, 400);
+
+  const db = drizzle(c.env.DB);
+  const body = await c.req.json();
+  const updates: any = {};
+  if (body.name !== undefined) updates.name = body.name;
+  if (body.targetAudience !== undefined) updates.targetAudience = body.targetAudience;
+  if (body.language !== undefined) updates.language = body.language;
+  if (body.market !== undefined) updates.market = body.market;
+  if (body.status !== undefined) updates.status = body.status;
+
+  if (Object.keys(updates).length === 0) {
+    return c.json({ error: "No valid fields to update" }, 400);
+  }
+
+  await db.update(pinterestNiches).set(updates).where(eq(pinterestNiches.id, id));
+  await invalidateCache(c, ["pinterest"]);
+  const [updated] = await db.select().from(pinterestNiches).where(eq(pinterestNiches.id, id)).limit(1);
+  if (!updated) return c.json({ error: "Niche not found" }, 404);
+  return c.json(updated);
+});
+
+// Delete Niche by ID
+app.delete("/api/pinterest/niches/:id", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  if (isNaN(id)) return c.json({ error: "Invalid niche ID" }, 400);
+
+  const db = drizzle(c.env.DB);
+  const nicheThemes = await db.select({ id: pinterestThemes.id }).from(pinterestThemes).where(eq(pinterestThemes.nicheId, id));
+  for (const t of nicheThemes) {
+    await db.delete(pinterestThemeStyles).where(eq(pinterestThemeStyles.themeId, t.id));
+  }
+  await db.update(pinterestThemes).set({ nicheId: null }).where(eq(pinterestThemes.nicheId, id));
+  await db.update(pinterestPrompts).set({ nicheId: null }).where(eq(pinterestPrompts.nicheId, id));
+  await db.delete(pinterestRecipes).where(eq(pinterestRecipes.nicheId, id));
+  await db.delete(pinterestContentTypes).where(eq(pinterestContentTypes.nicheId, id));
+  await db.delete(pinterestNiches).where(eq(pinterestNiches.id, id));
+  await invalidateCache(c, ["pinterest"]);
+  return c.json({ ok: true, deleted: id });
+});
+
+// Regenerate Niche Draft from existing record
+app.post("/api/pinterest/niches/:id/regenerate", async (c) => {
+  const id = parseInt(c.req.param("id"));
+  if (isNaN(id)) return c.json({ error: "Invalid niche ID" }, 400);
+
+  const db = drizzle(c.env.DB);
+  const [niche] = await db.select().from(pinterestNiches).where(eq(pinterestNiches.id, id)).limit(1);
+  if (!niche) return c.json({ error: "Niche not found" }, 404);
+
+  try {
+    const draft = await generateNicheLibrary({
+      niche: niche.name,
+      audience: niche.targetAudience || undefined,
+      language: niche.language || "English",
+      market: niche.market || "United States"
+    }, c.env);
+
+    const validation = validateNicheLibrary(draft);
+    if (c.env.FONTS_CACHE_KV) {
+      await c.env.FONTS_CACHE_KV.put(
+        `pinterest:niche-draft:${draft.draftId}`,
+        JSON.stringify({ draft, validation }),
+        { expirationTtl: 86400 }
+      );
+    }
+    return c.json({
+      ok: true,
+      draftId: draft.draftId,
+      draft,
+      validation
+    }, 201);
+  } catch (err: any) {
+    return c.json({ ok: false, error: err.message }, 500);
+  }
+});
+
+// Get Niche Content Types
+app.get("/api/pinterest/niches/:id/content-types", cacheResponse({ ttl: 120, tags: ["pinterest"] }), async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const db = drizzle(c.env.DB);
+  const result = await db.select().from(pinterestContentTypes).where(eq(pinterestContentTypes.nicheId, id));
+  return c.json(result);
+});
+
+// Get Niche Themes (with compatible styles)
+app.get("/api/pinterest/niches/:id/themes", cacheResponse({ ttl: 120, tags: ["pinterest"] }), async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const db = drizzle(c.env.DB);
+  const themes = await db.select().from(pinterestThemes).where(eq(pinterestThemes.nicheId, id));
+  const styles = await db.select().from(pinterestPrompts).where(eq(pinterestPrompts.nicheId, id));
+  const result = await Promise.all(
+    themes.map(async (t) => {
+      const junction = await db.select().from(pinterestThemeStyles).where(eq(pinterestThemeStyles.themeId, t.id));
+      const styleIds = junction.map((j) => j.styleId);
+      const compatibleStyles = styles.filter((s) => styleIds.includes(s.id));
+      return {
+        ...t,
+        compatibleStyles,
+        compatibleStyleNames: compatibleStyles.map((s) => s.name)
+      };
+    })
+  );
+  return c.json(result);
+});
+
+// Get Niche Styles
+app.get("/api/pinterest/niches/:id/styles", cacheResponse({ ttl: 120, tags: ["pinterest"] }), async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const db = drizzle(c.env.DB);
+  const result = await db.select().from(pinterestPrompts).where(eq(pinterestPrompts.nicheId, id));
+  return c.json(result);
+});
+
+// Get Niche Recipes
+app.get("/api/pinterest/niches/:id/recipes", cacheResponse({ ttl: 120, tags: ["pinterest"] }), async (c) => {
+  const id = parseInt(c.req.param("id"));
+  const db = drizzle(c.env.DB);
+  const recipes = await db.select().from(pinterestRecipes).where(eq(pinterestRecipes.nicheId, id));
+  const contentTypes = await db.select().from(pinterestContentTypes).where(eq(pinterestContentTypes.nicheId, id));
+  const ctMap = new Map(contentTypes.map((ct) => [ct.id, ct.name]));
+  const result = recipes.map((r) => ({
+    ...r,
+    contentTypeName: r.contentTypeId ? ctMap.get(r.contentTypeId) || null : null
+  }));
+  return c.json(result);
+});
+
+// ── Pinterest Stats & Trends ────────────────────────────────────────────────
 // Pinterest Stats
 app.get("/api/pinterest/stats", async (c) => {
   const db = drizzle(c.env.DB);
@@ -3074,21 +4258,99 @@ async function handleRSSRequest(c: any) {
   }
 }
 
-// Multi-Account Auto-Pilot Trigger Endpoint
+// Multi-Account Channels CRUD
+app.get("/api/pinterest/channels", async (c) => {
+  const channels = await getActiveChannels(c.env);
+  return c.json(channels);
+});
+
+app.post("/api/pinterest/channels", async (c) => {
+  const body = await c.req.json();
+  const channels = await getActiveChannels(c.env);
+
+  const newChannel = {
+    id: body.id || `account-${Date.now()}`,
+    name: body.name || body.accountName || "New Account",
+    niche: body.niche || "Home Decor",
+    nicheId: body.nicheId || null,
+    claimedDomain: body.claimedDomain || "https://vulius.com",
+    dailyPinLimit: body.dailyPinLimit || 10,
+    keywords: Array.isArray(body.keywords) ? body.keywords : (body.keywords ? body.keywords.split(",").map((k: string) => k.trim()) : ["pinterest ideas"]),
+    themes: body.themes || ["General"],
+    styles: body.styles || ["Modern Scandinavian"],
+    model: body.model || "flux"
+  };
+
+  const updated = [newChannel, ...channels.filter((ch: any) => ch.id !== newChannel.id)];
+  if (c.env.FONTS_CACHE_KV) {
+    await c.env.FONTS_CACHE_KV.put("pinterest:channels", JSON.stringify(updated));
+  }
+
+  return c.json({ saved: true, channel: newChannel }, 201);
+});
+
+app.delete("/api/pinterest/channels/:id", async (c) => {
+  const id = c.req.param("id");
+  const result = await deleteChannel(c.env, id);
+  return c.json(result);
+});
+
+// Dedicated Recipe / Autopilot Channel Deletion (Cancels Active Jobs + Cleans KV)
+app.delete("/api/pinterest/autopilot/:channelId", async (c) => {
+  const channelId = c.req.param("channelId");
+  const result = await deleteChannel(c.env, channelId);
+  return c.json(result);
+});
+
+// Multi-Account Auto-Pilot Trigger Endpoint (Enqueues into unified PINTEREST_QUEUE)
 app.post("/api/pinterest/autopilot/run", async (c) => {
   try {
     const body = await c.req.json().catch(() => ({}));
-    const channels = body.channels || DEFAULT_CHANNELS;
-    const results = await runAutoPilotBatch(c.env, channels);
-    return c.json({ ok: true, generatedCount: results.length, items: results });
+    const channels = body.channels || await getActiveChannels(c.env);
+    const jobs = await runAutoPilotBatch(c.env, channels);
+    return c.json({
+      ok: true,
+      message: `Enqueued ${jobs.length} autopilot channel jobs to queue`,
+      jobsCount: jobs.length,
+      jobs
+    });
   } catch (err: any) {
     return c.json({ ok: false, error: err.message }, 500);
   }
 });
 
+// ── Unified Pinterest Queue Management Routes ───────────────────────────────
+
+// 1. GET /api/pinterest/queue/active — List all currently running Pinterest jobs
+app.get("/api/pinterest/queue/active", async (c) => {
+  const jobs = await getActiveQueueJobs(c.env);
+  return c.json({ ok: true, count: jobs.length, jobs });
+});
+
+// 2. POST /api/pinterest/queue/:jobId/cancel — Cancel any running job
+app.post("/api/pinterest/queue/:jobId/cancel", async (c) => {
+  const jobId = c.req.param("jobId");
+  const result = await cancelJob(c.env, jobId);
+  return c.json(result);
+});
+
+// 2B. DELETE /api/pinterest/queue/:jobId — Delete job from KV and wipe generated pins/images
+app.delete("/api/pinterest/queue/:jobId", async (c) => {
+  const jobId = c.req.param("jobId");
+  const result = await deleteQueueJob(c.env, jobId);
+  return c.json(result);
+});
+
+// 3. GET /api/pinterest/queue/history — View recent queue runs & statuses
+app.get("/api/pinterest/queue/history", async (c) => {
+  const limit = parseInt(c.req.query("limit") || "50", 10);
+  const history = await getQueueHistory(c.env, limit);
+  return c.json({ ok: true, count: history.length, jobs: history });
+});
+
 // Pinterest Settings (KV-based)
 app.get("/api/pinterest/settings", async (c) => {
-  const raw = await c.env.FONTS_CACHE_KV.get("pinterest:settings");
+  const raw = await c.env.FONTS_CACHE_KV?.get("pinterest:settings");
   const settings = raw ? JSON.parse(raw) : {
     defaultModel: "qwen",
     defaultSize: "1000x1500",
@@ -3101,27 +4363,37 @@ app.get("/api/pinterest/settings", async (c) => {
 
 app.post("/api/pinterest/settings", async (c) => {
   const body = await c.req.json();
-  await c.env.FONTS_CACHE_KV.put("pinterest:settings", JSON.stringify(body));
+  if (c.env.FONTS_CACHE_KV) {
+    await c.env.FONTS_CACHE_KV.put("pinterest:settings", JSON.stringify(body));
+  }
   return c.json({ saved: true });
 });
 
-// Pinterest Batch Generation (supports direct trends or multi-select combinations matrix)
+// Pinterest Batch Generation (Enqueues items into unified PINTEREST_QUEUE)
 app.post("/api/pinterest/batch", async (c) => {
   const body = await c.req.json();
   const jobId = Date.now().toString(36) + Math.random().toString(36).substr(2, 4);
 
   let combinations: Array<{ keyword: string; theme: string; style: string; product: string; imageUrl: string }> = [];
 
-  if (body.imageUrls && Array.isArray(body.imageUrls) && body.imageUrls.length > 0) {
-    // Multi-select combination mode: Images x Keywords x Themes x Styles
-    const keywords: string[] = body.keywords?.length ? body.keywords : ["Pinterest Trend"];
-    const themes: string[] = body.themes?.length ? body.themes : ["General"];
-    const styles: string[] = body.styles?.length ? body.styles : ["Modern"];
-    const product = body.product || "Creative Decor";
+  const keywords: string[] = body.keywords?.length ? body.keywords : (body.keyword ? [body.keyword] : []);
+  const themes: string[] = body.themes?.length ? body.themes : ["General"];
+  const styles: string[] = body.styles?.length ? body.styles : ["Modern"];
+  const product = body.product || body.niche || "Creative Decor";
 
-    for (const url of body.imageUrls) {
-      if (!url || !url.trim()) continue;
-      for (const kw of keywords) {
+  if (body.combinations && Array.isArray(body.combinations) && body.combinations.length > 0) {
+    combinations = body.combinations.map((item: any) => ({
+      keyword: item.keyword || item.topic || "Pinterest Trend",
+      theme: item.theme || "General",
+      style: item.style || "Modern",
+      product: item.product || product,
+      imageUrl: item.imageUrl || ""
+    }));
+  } else if (body.imageUrls && Array.isArray(body.imageUrls) && body.imageUrls.length > 0) {
+    // Multi-select combination mode: Images x Keywords x Themes x Styles
+    const validUrls = body.imageUrls.filter((u: string) => u && u.trim());
+    for (const url of validUrls) {
+      for (const kw of (keywords.length ? keywords : ["Pinterest Trend"])) {
         for (const th of themes) {
           for (const st of styles) {
             combinations.push({
@@ -3135,63 +4407,154 @@ app.post("/api/pinterest/batch", async (c) => {
         }
       }
     }
+  } else if (keywords.length > 0) {
+    // Keywords x Themes x Styles without reference images
+    for (const kw of keywords) {
+      for (const th of themes) {
+        for (const st of styles) {
+          combinations.push({
+            keyword: kw,
+            theme: th,
+            style: st,
+            product: product,
+            imageUrl: ""
+          });
+        }
+      }
+    }
   } else {
-    // Single-trend mode
+    // Fallback single-trend mode
     combinations = body.trends || [];
+  }
+
+  // Cap if maxPins is specified
+  if (body.maxPins && body.maxPins > 0 && combinations.length > body.maxPins) {
+    combinations = combinations.slice(0, body.maxPins);
   }
 
   const totalJobs = combinations.length * (body.variants || 1);
 
-  // Save batch job metadata to KV
-  await c.env.FONTS_CACHE_KV.put(`pinterest:batch:${jobId}`, JSON.stringify({
+  const jobMetadata = {
     jobId,
-    status: "running",
+    type: "batch",
+    status: totalJobs > 0 ? "running" : "completed",
+    channelId: body.accountChannelId || body.channelId || null,
+    channelName: body.channelName || body.accountChannelId || (body.accountChannelId ? `Account (${body.accountChannelId})` : "Ad-Hoc Batch"),
+    niche: product,
+    nicheId: body.nicheId || null,
+    keywords: keywords.length ? keywords : combinations.map(c => c.keyword),
+    themes,
+    styles,
     total: totalJobs,
     completed: 0,
     failed: 0,
     generateImages: body.generateImages !== false,
     generateSeo: body.generateSeo !== false,
     variants: body.variants || 1,
-    createdAt: new Date().toISOString()
-  }), { expirationTtl: 86400 * 7 });
+    model: body.model || "flux",
+    createdAt: new Date().toISOString(),
+    finishedAt: totalJobs === 0 ? new Date().toISOString() : undefined
+  };
 
-  // Enqueue each combination item
-  for (const combo of combinations) {
-    for (let v = 0; v < (body.variants || 1); v++) {
-      await c.env.PINTEREST_QUEUE.send({
-        jobId,
-        trend: combo,
-        variant: v + 1,
-        generateImages: body.generateImages !== false,
-        generateSeo: body.generateSeo !== false,
-        model: body.model || "qwen"
-      });
+  // Save batch job metadata to KV under unified key & legacy key
+  if (c.env.FONTS_CACHE_KV) {
+    await c.env.FONTS_CACHE_KV.put(`pinterest:job:${jobId}`, JSON.stringify(jobMetadata), { expirationTtl: 86400 * 7 });
+    await c.env.FONTS_CACHE_KV.put(`pinterest:batch:${jobId}`, JSON.stringify(jobMetadata), { expirationTtl: 86400 * 7 });
+  }
+
+  // Enqueue each combination item to PINTEREST_QUEUE
+  if (c.env.PINTEREST_QUEUE && totalJobs > 0) {
+    for (const combo of combinations) {
+      for (let v = 0; v < (body.variants || 1); v++) {
+        await c.env.PINTEREST_QUEUE.send({
+          jobId,
+          type: "batch",
+          channelId: body.accountChannelId || null,
+          nicheId: body.nicheId || null,
+          trend: combo,
+          generateImages: body.generateImages !== false,
+          generateSeo: body.generateSeo !== false,
+          model: body.model || "flux"
+        });
+      }
     }
   }
 
-  return c.json({ jobId, total: totalJobs }, 201);
+  // If repeatDaily is requested, register recurring schedule in KV
+  if (body.repeatDaily && c.env.FONTS_CACHE_KV) {
+    try {
+      const rawBatches = await c.env.FONTS_CACHE_KV.get("pinterest:recurring-batches");
+      const recurringList = rawBatches ? JSON.parse(rawBatches) : [];
+      const newRecurring = {
+        id: `batch-sched-${Date.now().toString(36)}`,
+        name: `${product} (${body.maxPins || totalJobs || 5} pins/day)`,
+        niche: product,
+        nicheId: body.nicheId || null,
+        imageUrls: body.imageUrls || [],
+        keywords,
+        themes,
+        styles,
+        product,
+        maxPins: body.maxPins || totalJobs || 5,
+        variants: body.variants || 1,
+        model: body.model || "flux",
+        publishToRss: !!body.publishToRss,
+        accountChannelId: body.accountChannelId || null,
+        generateImages: body.generateImages !== false,
+        generateSeo: body.generateSeo !== false,
+        enabled: true,
+        createdAt: new Date().toISOString(),
+        lastRunAt: new Date().toISOString()
+      };
+      recurringList.push(newRecurring);
+      await c.env.FONTS_CACHE_KV.put("pinterest:recurring-batches", JSON.stringify(recurringList));
+    } catch (err) {
+      console.error("Error saving recurring batch to KV:", err);
+    }
+  }
+
+  return c.json({ jobId, total: totalJobs, repeatDaily: !!body.repeatDaily }, 201);
 });
 
 app.get("/api/pinterest/batch/:jobId", async (c) => {
   const jobId = c.req.param("jobId");
-  const raw = await c.env.FONTS_CACHE_KV.get(`pinterest:batch:${jobId}`);
+  let raw = await c.env.FONTS_CACHE_KV?.get(`pinterest:job:${jobId}`);
+  if (!raw) {
+    raw = await c.env.FONTS_CACHE_KV?.get(`pinterest:batch:${jobId}`);
+  }
   if (!raw) return c.json({ error: "Batch job not found" }, 404);
   return c.json(JSON.parse(raw));
 });
 
-// ── Queue Handler (supports both jersey bulk + pinterest batch) ──────────────
+// ── Unified Pinterest Queue Consumer Handler ────────────────────────────────
 
 async function pinterestQueueHandler(batch: MessageBatch<any>, env: Env) {
   const db = drizzle(env.DB);
 
   for (const msg of batch.messages) {
-    const { jobId, trend, variant, generateImages, generateSeo, model } = msg.body;
+    const { jobId, trend, variant, generateImages, generateSeo, model, channelId, nicheId } = msg.body;
 
     try {
-      // Read current job status
-      const raw = await env.FONTS_CACHE_KV.get(`pinterest:batch:${jobId}`);
-      if (!raw) { msg.ack(); continue; }
+      // Read current job status from KV (unified or legacy key)
+      let jobKey = `pinterest:job:${jobId}`;
+      let raw = await env.FONTS_CACHE_KV?.get(jobKey);
+      if (!raw) {
+        jobKey = `pinterest:batch:${jobId}`;
+        raw = await env.FONTS_CACHE_KV?.get(jobKey);
+      }
+
+      if (!raw) {
+        msg.ack();
+        continue;
+      }
+
       const job = JSON.parse(raw);
+
+      // CANCELLATION CHECK: If job was cancelled by user, skip immediately!
+      if (job.status === "cancelled") {
+        msg.ack();
+        continue;
+      }
 
       if (generateImages) {
         const result = await generatePinterestCreative({
@@ -3205,6 +4568,9 @@ async function pinterestQueueHandler(batch: MessageBatch<any>, env: Env) {
 
         // Save to history with R2 URL
         await db.insert(pinterestHistory).values({
+          jobId: jobId || null,
+          nicheId: nicheId || null,
+          accountChannelId: channelId || null,
           keyword: trend.keyword,
           theme: trend.theme || "General",
           style: trend.style || "Modern",
@@ -3234,6 +4600,9 @@ async function pinterestQueueHandler(batch: MessageBatch<any>, env: Env) {
         );
 
         await db.insert(pinterestHistory).values({
+          jobId: jobId || null,
+          nicheId: nicheId || null,
+          accountChannelId: channelId || null,
           keyword: trend.keyword,
           theme: trend.theme || "General",
           style: trend.style || "Modern",
@@ -3249,24 +4618,40 @@ async function pinterestQueueHandler(batch: MessageBatch<any>, env: Env) {
         });
       }
 
-      // Update batch progress
-      job.completed++;
-      if (job.completed + job.failed >= job.total) {
+      // Update progress in KV
+      job.completed = (job.completed || 0) + 1;
+      if (job.completed + (job.failed || 0) >= job.total) {
         job.status = "completed";
+        job.finishedAt = new Date().toISOString();
       }
-      await env.FONTS_CACHE_KV.put(`pinterest:batch:${jobId}`, JSON.stringify(job), { expirationTtl: 86400 * 7 });
+
+      if (env.FONTS_CACHE_KV) {
+        await env.FONTS_CACHE_KV.put(jobKey, JSON.stringify(job), { expirationTtl: 86400 * 7 });
+        if (jobKey.startsWith("pinterest:job:")) {
+          await env.FONTS_CACHE_KV.put(`pinterest:batch:${jobId}`, JSON.stringify(job), { expirationTtl: 86400 * 7 });
+        }
+      }
 
     } catch (err: any) {
-      console.error(`Pinterest batch item failed:`, err);
+      console.error(`Pinterest queue item failed:`, err);
       try {
-        const raw = await env.FONTS_CACHE_KV.get(`pinterest:batch:${jobId}`);
+        let jobKey = `pinterest:job:${jobId}`;
+        let raw = await env.FONTS_CACHE_KV?.get(jobKey);
+        if (!raw) {
+          jobKey = `pinterest:batch:${jobId}`;
+          raw = await env.FONTS_CACHE_KV?.get(jobKey);
+        }
+
         if (raw) {
           const job = JSON.parse(raw);
-          job.failed++;
-          if (job.completed + job.failed >= job.total) {
+          job.failed = (job.failed || 0) + 1;
+          if ((job.completed || 0) + job.failed >= job.total) {
             job.status = "completed";
+            job.finishedAt = new Date().toISOString();
           }
-          await env.FONTS_CACHE_KV.put(`pinterest:batch:${jobId}`, JSON.stringify(job), { expirationTtl: 86400 * 7 });
+          if (env.FONTS_CACHE_KV) {
+            await env.FONTS_CACHE_KV.put(jobKey, JSON.stringify(job), { expirationTtl: 86400 * 7 });
+          }
         }
       } catch (kvErr) {
         console.error("Error updating failed KV job status:", kvErr);
@@ -3291,5 +4676,7 @@ export default {
   async scheduled(event: any, env: Env, ctx: any) {
     ctx.waitUntil(syncOrders(env));
     ctx.waitUntil(runAutoPilotBatch(env));
+    ctx.waitUntil(runRecurringBatches(env));
+    ctx.waitUntil(runDailyMarketingDrip(env));
   }
 };

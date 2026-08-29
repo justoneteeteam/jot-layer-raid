@@ -100,18 +100,58 @@ async function resolveApiKey(
 
 // ── Prompt Builder ───────────────────────────────────────────────────────────
 
-export function buildPrompt(keyword: string, theme: string, style: string, product: string, referenceImageUrl?: string): string {
-  return `Design a new ${product || "interior creative"} combining theme "${theme || "General"}" and style "${style || "Modern"}", inspired by reference image link: ${referenceImageUrl || "provided visual"}.
+export function buildPrompt(params: PinterestGenerateParams | {
+  keyword: string;
+  theme?: string;
+  style?: string;
+  product?: string;
+  referenceImageUrl?: string;
+  styleDescription?: string;
+  colorPalette?: string;
+  lightingStyle?: string;
+  cameraStyle?: string;
+  positivePrompt?: string;
+}): string {
+  const { keyword, theme, style, product, styleDescription, colorPalette, lightingStyle, cameraStyle, positivePrompt } = params as any;
 
-Generate a completely original Pinterest vertical image optimized for keyword: ${keyword}
+  const parts: string[] = [];
 
-Design Instructions:
-- Subject: ${product || "Interior Decor"}
-- Theme: ${theme || "General"}
-- Style: ${style || "Modern"}
-- Target Keyword: ${keyword}
-- Inspiration: Use visual reference for color palette and tone only. Do NOT copy composition.
-- Premium editorial lifestyle photography, high realism, 2:3 ratio, magazine quality, natural lighting.`;
+  // Subject
+  parts.push(`Subject: High quality ${product || "interior creative"} featuring ${keyword}`);
+
+  // Style Description
+  if (styleDescription) {
+    parts.push(`Aesthetic Style: ${styleDescription}`);
+  } else if (style || theme) {
+    parts.push(`Style Theme: ${style || "Modern"} ${theme || "General"}`);
+  }
+
+  // Color Palette
+  if (colorPalette) {
+    parts.push(`Color Palette: ${colorPalette}`);
+  }
+
+  // Lighting
+  if (lightingStyle) {
+    parts.push(`Lighting: ${lightingStyle}`);
+  } else {
+    parts.push(`Lighting: Soft diffused natural daylight, warm ambient shadows`);
+  }
+
+  // Camera & Framing
+  if (cameraStyle) {
+    parts.push(`Camera & Framing: ${cameraStyle}`);
+  } else {
+    parts.push(`Camera & Framing: Eye-level architectural interior photography, 35mm lens, f/2.8 shallow depth of field, 2:3 vertical Pinterest ratio`);
+  }
+
+  if (positivePrompt) {
+    parts.push(positivePrompt);
+  } else {
+    parts.push("8k resolution, professional editorial lifestyle photography, realistic texture, crisp details, magazine quality.");
+  }
+
+  return parts.join(". ");
 }
 
 export function buildNegativePrompt(custom?: string): string {
@@ -128,6 +168,69 @@ export function buildNegativePrompt(custom?: string): string {
     return custom;
   }
   return defaults.join(". ");
+}
+
+// ── Vision AI Style Extractor ───────────────────────────────────────────────
+
+export async function extractStyleFromReferenceImage(imageUrl: string, env: Env) {
+  try {
+    const { base64, mimeType } = await downloadReferenceImage(imageUrl);
+    const apiKey = await resolveApiKey(env, "QWEN_API_KEY");
+
+    let extracted: any = null;
+
+    if (apiKey) {
+      const res = await fetch("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${apiKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          model: "qwen-vl-max",
+          messages: [
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: "Analyze the aesthetic style of this reference image for AI prompt generation. Respond ONLY with valid JSON in this exact structure: {\"name\": \"short title\", \"styleDescription\": \"detailed visual description of materials, mood, decor\", \"colorPalette\": \"dominant colors\", \"lightingStyle\": \"lighting setup\", \"cameraStyle\": \"framing, lens, angle\", \"positivePrompt\": \"comma-separated positive prompt keywords\", \"negativePrompt\": \"comma-separated negative keywords to avoid\"}"
+                },
+                {
+                  type: "image_url",
+                  image_url: { url: `data:${mimeType};base64,${base64}` }
+                }
+              ]
+            }
+          ]
+        })
+      });
+
+      const data = (await res.json()) as any;
+      const textOutput = data?.choices?.[0]?.message?.content || "";
+      const jsonMatch = textOutput.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        extracted = JSON.parse(jsonMatch[0]);
+      }
+    }
+
+    if (!extracted) {
+      extracted = {
+        name: "Extracted Reference Style",
+        styleDescription: "Modern editorial lifestyle aesthetic with neutral tones",
+        colorPalette: "Warm beige, cream, natural wood, earthy sage",
+        lightingStyle: "Soft diffused daylight",
+        cameraStyle: "Eye-level 35mm photography, 2:3 vertical aspect ratio",
+        positivePrompt: "8k resolution, realistic texture, interior magazine style",
+        negativePrompt: "oversaturated, cartoon, low quality, blurry"
+      };
+    }
+
+    return extracted;
+  } catch (err: any) {
+    console.error("Error extracting style from image:", err);
+    throw err;
+  }
 }
 
 // ── Slugify helper for file naming ───────────────────────────────────────────
@@ -357,8 +460,7 @@ async function generateImageFlux(
   }
 
   const response = await env.AI.run("@cf/black-forest-labs/flux-1-schnell", {
-    prompt: prompt,
-    num_steps: 4
+    prompt: prompt
   });
 
   if (response instanceof ReadableStream) {
@@ -490,7 +592,7 @@ export async function generatePinterestCreative(
   const { base64, mimeType } = await downloadReferenceImage(params.referenceImageUrl);
 
   // Step 2: Build prompt
-  const prompt = buildPrompt(params.keyword, params.theme, params.style, params.product, params.referenceImageUrl);
+  const prompt = buildPrompt(params);
   const negativePrompt = buildNegativePrompt(params.negativePrompt);
 
   // Step 3: Generate image
@@ -533,7 +635,7 @@ export async function generatePinterestCreative(
     promptUsed: prompt,
     negativePrompt,
     fileName,
-    modelUsed: model === "openai" ? "dall-e-3" : "qwen-wanx-v1",
+    modelUsed: model === "openai" ? "dall-e-3" : (model === "flux" ? "flux-1-schnell" : "qwen-wanx-v1"),
     generationTimeMs
   };
 }

@@ -5,6 +5,16 @@ export interface Env {
   BULK_QUEUE: Queue;
   PINTEREST_QUEUE: Queue;
   AI?: any;
+  EMAIL?: {
+    send(message: {
+      to: string | string[];
+      from: string;
+      subject: string;
+      text?: string;
+      html?: string;
+      headers?: Record<string, string>;
+    }): Promise<void>;
+  };
   
   // Environment secrets
   JWT_SECRET?: string;
@@ -14,4 +24,10 @@ export interface Env {
   R2_PUBLIC_URL?: string;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_ID?: string;
+  CLOUDFLARE_ACCOUNT_ID?: string;
+  CLOUDFLARE_API_TOKEN?: string;
+  DEFAULT_FROM_EMAIL?: string;
+  DEFAULT_FROM_NAME?: string;
+  UNSUBSCRIBE_BASE_URL?: string;
 }
+

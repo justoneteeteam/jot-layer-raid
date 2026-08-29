@@ -29,7 +29,7 @@ export default function PinterestSettings() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ show: boolean, message: string }>({ show: false, message: "" });
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
 
   useEffect(() => {
     const fetchSettings = async () => {

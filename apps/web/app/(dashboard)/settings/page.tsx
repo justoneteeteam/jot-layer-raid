@@ -3,13 +3,14 @@
 import { useState, useEffect } from "react";
 import { fetchStores, createStore, updateStore, deleteStore, testStoreCredentials, testStoreConnection as testStoreConnectionApi } from "../../lib/api";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
 
 interface StoreEntry {
   id: number;
   name: string;
   platform: "WooCommerce" | "ShopBase" | "Astro";
   url: string;
+  webhookUrl?: string;
   apiKey: string;
   apiSecret: string;
   hasCredentials: boolean;
@@ -35,12 +36,20 @@ const INITIAL_STORES: StoreEntry[] = [];
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<"stores" | "crm" | "senders">("stores");
   const [stores, setStores] = useState<StoreEntry[]>(INITIAL_STORES);
+  const [storesLoading, setStoresLoading] = useState(true);
   
   // Store Modal states
   const [storeModalOpen, setStoreModalOpen] = useState(false);
   const [editStoreId, setEditStoreId] = useState<number | null>(null);
   const [deleteStoreId, setDeleteStoreId] = useState<number | null>(null);
-  const [storeForm, setStoreForm] = useState({ name: "", platform: "WooCommerce" as "WooCommerce" | "ShopBase" | "Astro", url: "", apiKey: "", apiSecret: "" });
+  const [storeForm, setStoreForm] = useState({
+    name: "",
+    platform: "WooCommerce" as "WooCommerce" | "ShopBase" | "Astro",
+    url: "",
+    webhookUrl: "",
+    apiKey: "",
+    apiSecret: ""
+  });
   const [testStatus, setTestStatus] = useState<"idle" | "testing" | "success" | "error">("idle");
   const [testMessage, setTestMessage] = useState("");
   const [syncing, setSyncing] = useState<number | null>(null);
@@ -138,25 +147,32 @@ export default function SettingsPage() {
   };
 
   const loadStores = async () => {
+    setStoresLoading(true);
     try {
       const data = await fetchStores();
-      const mapped = data.map((s: any) => ({
-        id: s.id,
-        name: s.name,
-        platform: (s.platform === "woocommerce" ? "WooCommerce" : s.platform === "shopbase" ? "ShopBase" : "Astro") as any,
-        url: s.url,
-        // Store masked display values (from backend) for display in table only
-        apiKey: s.apiKey || "",
-        apiSecret: s.apiSecret || "",
-        // Track whether credentials actually exist in the database
-        hasCredentials: !!(s.apiKey && s.apiKey.length > 0),
-        status: (s.is_active ? "active" : "inactive") as any,
-        products: s.platform === "woocommerce" ? 128 : s.platform === "shopbase" ? 84 : 142,
-        lastSync: s.last_synced_at ? new Date(s.last_synced_at).toLocaleString() : "Never"
-      }));
-      setStores(mapped);
-    } catch (err) {
+      if (Array.isArray(data)) {
+        const mapped = data.map((s: any) => ({
+          id: s.id,
+          name: s.name,
+          platform: (s.platform === "woocommerce" ? "WooCommerce" : s.platform === "shopbase" ? "ShopBase" : "Astro") as any,
+          url: s.url,
+          webhookUrl: s.webhook_url || s.webhookUrl || (s.platform?.toLowerCase() === "astro" ? "https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro" : ""),
+          // Store masked display values (from backend) for display in table only
+          apiKey: s.apiKey || "",
+          apiSecret: s.apiSecret || "",
+          // Track whether credentials actually exist in the database
+          hasCredentials: !!(s.apiKey && s.apiKey.length > 0),
+          status: (s.is_active ? "active" : "inactive") as any,
+          products: s.platform === "woocommerce" ? 128 : s.platform === "shopbase" ? 84 : 142,
+          lastSync: s.last_synced_at ? new Date(s.last_synced_at).toLocaleString() : "Never"
+        }));
+        setStores(mapped);
+      }
+    } catch (err: any) {
       console.error("Failed to load stores", err);
+      showStatus(`⚠️ Could not load stores: ${err?.message || "Check connection"}`, "error");
+    } finally {
+      setStoresLoading(false);
     }
   };
 
@@ -198,7 +214,14 @@ export default function SettingsPage() {
   // Store Connections CRUD
   const openAddStore = () => {
     setEditStoreId(null);
-    setStoreForm({ name: "", platform: "WooCommerce", url: "", apiKey: "", apiSecret: "" });
+    setStoreForm({
+      name: "",
+      platform: "Astro",
+      url: "",
+      webhookUrl: "https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro",
+      apiKey: "",
+      apiSecret: ""
+    });
     setTestStatus("idle"); setTestMessage("");
     setStoreModalOpen(true);
   };
@@ -208,7 +231,14 @@ export default function SettingsPage() {
     // IMPORTANT: Always open with EMPTY credential fields so user can type freely.
     // The backend never returns raw keys (security). If user leaves these blank on save,
     // the existing database credentials are preserved untouched.
-    setStoreForm({ name: store.name, platform: store.platform, url: store.url, apiKey: "", apiSecret: "" });
+    setStoreForm({
+      name: store.name,
+      platform: store.platform,
+      url: store.url,
+      webhookUrl: store.webhookUrl || (store.platform === "Astro" ? "https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro" : ""),
+      apiKey: "",
+      apiSecret: ""
+    });
     setTestStatus("idle"); setTestMessage("");
     setStoreModalOpen(true);
   };
@@ -250,12 +280,20 @@ export default function SettingsPage() {
   };
 
   const handleSaveStore = async () => {
-    if (!storeForm.name || !storeForm.url) return;
+    if (!storeForm.name.trim()) {
+      showStatus("❌ Store Name is required.", "error");
+      return;
+    }
+    if (!storeForm.url.trim()) {
+      showStatus("❌ Store URL is required.", "error");
+      return;
+    }
     try {
       if (editStoreId) {
         const payload: any = {
-          name: storeForm.name,
-          url: storeForm.url
+          name: storeForm.name.trim(),
+          url: storeForm.url.trim(),
+          webhook_url: storeForm.platform === "Astro" ? (storeForm.webhookUrl.trim() || "https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro") : undefined
         };
         // Only send credentials if user actually typed something new.
         // Empty fields = keep existing DB credentials untouched.
@@ -271,24 +309,33 @@ export default function SettingsPage() {
         await updateStore(editStoreId, payload);
         showStatus("✔️ Store connection successfully updated!", "success");
       } else {
-        if (!storeForm.apiKey.trim() || !storeForm.apiSecret.trim()) {
+        const platform = storeForm.platform.toLowerCase();
+        let apiKey = storeForm.apiKey.trim();
+        let apiSecret = storeForm.apiSecret.trim();
+
+        if (platform === "astro") {
+          if (!apiKey) apiKey = `astro_${Date.now()}`;
+          if (!apiSecret) apiSecret = `astro_sec_${Date.now()}`;
+        } else if (!apiKey || !apiSecret) {
           showStatus("❌ API Key and API Secret are required for new stores.", "error");
           return;
         }
+
         await createStore({
-          name: storeForm.name,
-          platform: storeForm.platform.toLowerCase(),
-          url: storeForm.url,
-          api_key: storeForm.apiKey.trim(),
-          api_secret: storeForm.apiSecret.trim()
+          name: storeForm.name.trim(),
+          platform: platform,
+          url: storeForm.url.trim(),
+          api_key: apiKey,
+          api_secret: apiSecret,
+          webhook_url: storeForm.platform === "Astro" ? (storeForm.webhookUrl.trim() || "https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro") : undefined
         });
         showStatus("✔️ Store connection successfully created!", "success");
       }
-      loadStores();
+      await loadStores();
       setStoreModalOpen(false);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      showStatus("❌ Failed to save store connection.", "error");
+      showStatus(`❌ Failed to save store connection: ${err?.message || "Error"}`, "error");
     }
   };
 
@@ -566,39 +613,74 @@ export default function SettingsPage() {
             <table>
               <thead>
                 <tr>
-                  <th>Store Name</th><th>Platform</th><th>URL</th><th>Products</th><th>Last Sync</th><th>Status</th><th>Actions</th>
+                  <th>Store Name</th><th>Platform</th><th>URL</th><th>Webhook URL</th><th>Products</th><th>Last Sync</th><th>Status</th><th>Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {stores.map((store) => (
-                  <tr key={store.id}>
-                    <td style={{ fontWeight: 500 }}>{store.name}</td>
-                    <td>
-                      <span className={`badge ${store.platform === "WooCommerce" ? "badge-info" : store.platform === "ShopBase" ? "badge-warning" : "badge-success"}`}>
-                        {store.platform === "WooCommerce" ? "🟣 " : store.platform === "ShopBase" ? "🔵 " : "🚀 "}{store.platform}
-                      </span>
-                    </td>
-                    <td style={{ fontSize: 13 }}>
-                      <a href={store.url} target="_blank" rel="noreferrer" style={{ color: "var(--accent)", textDecoration: "none" }}>{store.url}</a>
-                    </td>
-                    <td style={{ fontFamily: "monospace" }}>{store.products}</td>
-                    <td style={{ fontSize: 13, color: "var(--text-secondary)" }}>{store.lastSync}</td>
-                    <td>
-                      <span className={`badge ${store.status === "active" ? "badge-success" : "badge-error"}`}>
-                        {store.status === "active" ? "🟢 Active" : "🔴 Inactive"}
-                      </span>
-                    </td>
-                    <td>
-                      <div style={{ display: "flex", gap: 4 }}>
-                        <button className="btn btn-ghost" onClick={() => handleSyncStore(store.id)} disabled={syncing === store.id} title="Sync Now">
-                          {syncing === store.id ? <span className="upload-spinner" /> : "🔄"}
-                        </button>
-                        <button className="btn btn-ghost" onClick={() => openEditStore(store)} title="Edit">✏️</button>
-                        <button className="btn btn-ghost" onClick={() => setDeleteStoreId(store.id)} title="Delete">🗑️</button>
-                      </div>
+                {storesLoading ? (
+                  <tr>
+                    <td colSpan={8} style={{ textAlign: "center", padding: "36px", color: "var(--text-secondary)" }}>
+                      <span className="upload-spinner" style={{ marginRight: 8, display: "inline-block" }} /> Loading connected stores...
                     </td>
                   </tr>
-                ))}
+                ) : stores.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} style={{ textAlign: "center", padding: "40px 16px", color: "var(--text-secondary)" }}>
+                      <div style={{ fontSize: 24, marginBottom: 8 }}>🛒</div>
+                      <div style={{ fontWeight: 600, color: "var(--text-primary)", fontSize: 15 }}>No Connected Stores</div>
+                      <div style={{ fontSize: 13, marginTop: 4 }}>Click <strong>➕ Add Store</strong> to link your WooCommerce, ShopBase, or Astro storefront.</div>
+                    </td>
+                  </tr>
+                ) : (
+                  stores.map((store) => (
+                    <tr key={store.id}>
+                      <td style={{ fontWeight: 500 }}>{store.name}</td>
+                      <td>
+                        <span className={`badge ${store.platform === "WooCommerce" ? "badge-info" : store.platform === "ShopBase" ? "badge-warning" : "badge-success"}`}>
+                          {store.platform === "WooCommerce" ? "🟣 " : store.platform === "ShopBase" ? "🔵 " : "🚀 "}{store.platform}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: 13 }}>
+                        <a href={store.url} target="_blank" rel="noreferrer" style={{ color: "var(--accent)", textDecoration: "none" }}>{store.url}</a>
+                      </td>
+                      <td style={{ fontSize: 12 }}>
+                        {store.platform === "Astro" ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                            <span style={{ fontFamily: "monospace", fontSize: 11, color: "var(--text-secondary)", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={store.webhookUrl || "https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro"}>
+                              {(store.webhookUrl || "https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro").replace("https://", "")}
+                            </span>
+                            <button
+                              className="btn btn-ghost"
+                              style={{ padding: "2px 4px", fontSize: 11 }}
+                              onClick={() => handleCopy(store.webhookUrl || "https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro", `store_webhook_${store.id}`)}
+                              title="Copy Webhook URL"
+                            >
+                              {copiedText === `store_webhook_${store.id}` ? "✅" : "📋"}
+                            </button>
+                          </div>
+                        ) : (
+                          <span style={{ color: "var(--text-muted)", fontSize: 11 }}>—</span>
+                        )}
+                      </td>
+                      <td style={{ fontFamily: "monospace" }}>{store.products}</td>
+                      <td style={{ fontSize: 13, color: "var(--text-secondary)" }}>{store.lastSync}</td>
+                      <td>
+                        <span className={`badge ${store.status === "active" ? "badge-success" : "badge-error"}`}>
+                          {store.status === "active" ? "🟢 Active" : "🔴 Inactive"}
+                        </span>
+                      </td>
+                      <td>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          <button className="btn btn-ghost" onClick={() => handleSyncStore(store.id)} disabled={syncing === store.id} title="Sync Now">
+                            {syncing === store.id ? <span className="upload-spinner" /> : "🔄"}
+                          </button>
+                          <button className="btn btn-ghost" onClick={() => openEditStore(store)} title="Edit">✏️</button>
+                          <button className="btn btn-ghost" onClick={() => setDeleteStoreId(store.id)} title="Delete">🗑️</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -1036,7 +1118,16 @@ export default function SettingsPage() {
               {/* Platform Selector */}
               <div className="store-platform-selector">
                 {(["WooCommerce", "ShopBase", "Astro"] as const).map((p) => (
-                  <button key={p} className={`store-platform-btn ${storeForm.platform === p ? "active" : ""}`} onClick={() => setStoreForm({ ...storeForm, platform: p })}>
+                  <button
+                    key={p}
+                    className={`store-platform-btn ${storeForm.platform === p ? "active" : ""}`}
+                    onClick={() => {
+                      const newWebhook = (p === "Astro" && !storeForm.webhookUrl)
+                        ? "https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro"
+                        : storeForm.webhookUrl;
+                      setStoreForm({ ...storeForm, platform: p, webhookUrl: newWebhook });
+                    }}
+                  >
                     <span className="store-platform-icon">{p === "WooCommerce" ? "🟣" : p === "ShopBase" ? "🔵" : "🚀"}</span>
                     <span>{p}</span>
                   </button>
@@ -1085,6 +1176,46 @@ export default function SettingsPage() {
                   onChange={(e) => setStoreForm({ ...storeForm, apiSecret: e.target.value })}
                 />
               </div>
+
+              {(storeForm.platform || "").toLowerCase() === "astro" && (
+                <div style={{ marginTop: 14, padding: "12px 14px", background: "var(--bg-secondary)", borderRadius: 8, border: "1px solid var(--border-default)" }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+                    <label className="form-label" style={{ fontWeight: 600, margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
+                      <span>🚀 Astro Store Webhook URL</span>
+                    </label>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ padding: "2px 8px", fontSize: 11 }}
+                        onClick={() => setStoreForm({ ...storeForm, webhookUrl: "https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro" })}
+                        title="Reset to default worker endpoint"
+                      >
+                        🔄 Reset Default
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        style={{ padding: "2px 8px", fontSize: 11 }}
+                        onClick={() => handleCopy(storeForm.webhookUrl || "https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro", "webhook_url")}
+                      >
+                        {copiedText === "webhook_url" ? "Copied!" : "📋 Copy"}
+                      </button>
+                    </div>
+                  </div>
+                  <input
+                    className="input"
+                    type="text"
+                    placeholder="https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro"
+                    value={storeForm.webhookUrl}
+                    onChange={(e) => setStoreForm({ ...storeForm, webhookUrl: e.target.value })}
+                    style={{ fontFamily: "monospace", fontSize: 12, background: "#fff" }}
+                  />
+                  <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 6, lineHeight: 1.4 }}>
+                    Configure your Astro store frontend (e.g. <code>src/lib/oms-webhook.ts</code>) to POST order payloads to this Webhook URL. You can customize this endpoint for any new store.
+                  </div>
+                </div>
+              )}
 
               {/* Test Connection */}
               <button className="btn btn-secondary" onClick={testStoreConnection} disabled={testStatus === "testing"} style={{ width: "100%", marginTop: 12 }}>

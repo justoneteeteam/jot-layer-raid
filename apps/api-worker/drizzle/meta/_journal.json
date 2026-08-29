@@ -15,6 +15,13 @@
       "when": 1783659476576,
       "tag": "0001_tiny_living_tribunal",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1787196324158,
+      "tag": "0002_nebulous_frightful_four",
+      "breakpoints": true
     }
   ]
 }

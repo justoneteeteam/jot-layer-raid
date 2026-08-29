@@ -95,6 +95,7 @@ export async function syncOrders(env: Env, targetPlatform?: string): Promise<{ s
                 .from(orders)
                 .where(
                   and(
+                    eq(orders.storeId, store.name),
                     eq(orders.orderId, mappedOrderId),
                     eq(orders.productName, productName),
                     eq(orders.variant, variantName)
@@ -209,6 +210,7 @@ export async function syncOrders(env: Env, targetPlatform?: string): Promise<{ s
                 .from(orders)
                 .where(
                   and(
+                    eq(orders.storeId, store.name),
                     eq(orders.orderId, mappedOrderId),
                     eq(orders.productName, productName),
                     eq(orders.variant, variantName)
@@ -288,6 +290,7 @@ export async function syncOrders(env: Env, targetPlatform?: string): Promise<{ s
               .from(orders)
               .where(
                 and(
+                  eq(orders.storeId, store.name),
                   eq(orders.orderId, mappedOrderId),
                   eq(orders.productName, productName),
                   eq(orders.variant, variantName)
@@ -414,6 +417,7 @@ export async function syncOrders(env: Env, targetPlatform?: string): Promise<{ s
               .from(orders)
               .where(
                 and(
+                  eq(orders.storeId, store.name),
                   eq(orders.orderId, mappedOrderId),
                   eq(orders.productName, productName),
                   eq(orders.variant, variantName)

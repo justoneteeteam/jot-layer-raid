@@ -48,7 +48,7 @@ export default function BulkPage() {
     setLoadingDetails(true);
     setShowDetailsModal(true);
     try {
-      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
       const token = localStorage.getItem("token");
       const res = await fetch(`${API_BASE}/api/bulk/jobs/${jobId}`, {
         headers: {
@@ -213,7 +213,7 @@ export default function BulkPage() {
   };
 
   const handleStart = async () => {
-    const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
     setSubmitting(true);
     try {
       const res = await fetch(`${API_BASE}/api/bulk/jobs`, {

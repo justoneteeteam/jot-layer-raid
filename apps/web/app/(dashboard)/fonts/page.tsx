@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import UploadModal from "../../components/UploadModal";
 import { Font, Team, fetchTeams, fetchFonts } from "../../lib/api";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
 
 interface FontEntry {
   id: number;

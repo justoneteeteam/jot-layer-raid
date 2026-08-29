@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 
 interface AccountChannel {
   id: string;
@@ -14,33 +14,41 @@ interface AccountChannel {
   model: string;
 }
 
+interface QueueJob {
+  jobId: string;
+  type?: string;
+  status: string;
+  channelId?: string;
+  channelName?: string;
+  niche?: string;
+  nicheId?: number | null;
+  claimedDomain?: string;
+  keywords?: string[] | string;
+  themes?: string[] | string;
+  styles?: string[] | string;
+  model?: string;
+  total: number;
+  completed: number;
+  failed: number;
+  progress?: number;
+  createdAt?: string;
+  finishedAt?: string;
+  elapsedMs?: number;
+}
+
 export default function PinterestAutoPilotManager() {
   const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
 
-  const [channels, setChannels] = useState<AccountChannel[]>([
-    {
-      id: "account-main",
-      name: "Pinterest Account #1 (Main Store)",
-      niche: "Home Decor",
-      claimedDomain: "https://vulius.com",
-      dailyPinLimit: 10,
-      keywords: "small apartment decor, cozy aesthetic living room, japandi bedroom, boho kitchen decor, minimalist bathroom ideas",
-      themes: ["General", "Summer Refresh", "Cozy Fall"],
-      styles: ["Modern Scandinavian", "Boho Chic", "Japandi"],
-      model: "flux"
-    },
-    {
-      id: "nailbox",
-      name: "Pinterest Account #2 (NfcWest / Niche)",
-      niche: "Home Decor",
-      claimedDomain: "https://nfcwestjersey.com/",
-      dailyPinLimit: 10,
-      keywords: "minimalist apartment decor, boho living room, small apartment decor, luxury living room ideas, aesthetic home styling",
-      themes: ["Summer Refresh", "General", "Cozy Fall"],
-      styles: ["Modern Luxury", "Eclectic Chic", "Modern Scandinavian"],
-      model: "flux"
-    }
-  ]);
+  const [channels, setChannels] = useState<AccountChannel[]>([]);
+  const [niches, setNiches] = useState<Array<{ id: number; name: string }>>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  const [activeJobs, setActiveJobs] = useState<QueueJob[]>([]);
+  const [queueHistory, setQueueHistory] = useState<QueueJob[]>([]);
+  const [cancellingJobId, setCancellingJobId] = useState<string | null>(null);
+  const [deletingJobId, setDeletingJobId] = useState<string | null>(null);
+  const [activeFilter, setActiveFilter] = useState<"all" | "batch" | "autopilot">("all");
+  const [historyFilter, setHistoryFilter] = useState<"all" | "batch" | "autopilot">("all");
 
   const [isRunning, setIsRunning] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
@@ -50,15 +58,106 @@ export default function PinterestAutoPilotManager() {
   // New Account Modal State
   const [newAccountName, setNewAccountName] = useState("");
   const [newNiche, setNewNiche] = useState("Home Decor");
+  const [newNicheId, setNewNicheId] = useState<number | null>(null);
   const [newDomain, setNewDomain] = useState("https://vulius.com");
   const [newLimit, setNewLimit] = useState(10);
   const [newKeywords, setNewKeywords] = useState("cozy room decor, luxury interior, aesthetic bedroom");
+
+  const pollTimerRef = useRef<any>(null);
+
+  useEffect(() => {
+    fetchChannelsAndNiches();
+    fetchQueueData();
+
+    return () => {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    };
+  }, []);
+
+  // Poll active queue every 5 seconds if there are running jobs
+  useEffect(() => {
+    if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+
+    const hasRunningJobs = activeJobs.some(j => j.status === "running");
+    if (hasRunningJobs || isRunning) {
+      pollTimerRef.current = setInterval(() => {
+        fetchQueueData();
+      }, 5000);
+    }
+
+    return () => {
+      if (pollTimerRef.current) clearInterval(pollTimerRef.current);
+    };
+  }, [activeJobs, isRunning]);
+
+  const fetchChannelsAndNiches = async () => {
+    try {
+      const [cRes, nRes] = await Promise.all([
+        fetch(`${API_BASE}/api/pinterest/channels?_t=${Date.now()}`),
+        fetch(`${API_BASE}/api/pinterest/niches?status=approved`)
+      ]);
+
+      if (cRes.ok) {
+        const data = await cRes.json();
+        if (Array.isArray(data)) {
+          const mapped: AccountChannel[] = data.map((c: any) => ({
+            id: c.id,
+            name: c.name || c.accountName || c.id,
+            niche: c.niche || "Home Decor",
+            claimedDomain: c.claimedDomain || "https://vulius.com",
+            dailyPinLimit: c.dailyPinLimit || 10,
+            keywords: Array.isArray(c.keywords) ? c.keywords.join(", ") : (c.keywords || "small apartment decor"),
+            themes: c.themes || ["General"],
+            styles: c.styles || ["Modern Scandinavian"],
+            model: c.model || "flux"
+          }));
+          setChannels(mapped);
+        }
+      }
+
+      if (nRes.ok) {
+        const nData = await nRes.json();
+        if (Array.isArray(nData)) {
+          setNiches(nData);
+        }
+      }
+    } catch (e) {
+      console.error("Error fetching data:", e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const fetchQueueData = async () => {
+    try {
+      const [activeRes, historyRes] = await Promise.all([
+        fetch(`${API_BASE}/api/pinterest/queue/active?_t=${Date.now()}`),
+        fetch(`${API_BASE}/api/pinterest/queue/history?limit=20&_t=${Date.now()}`)
+      ]);
+
+      if (activeRes.ok) {
+        const data = await activeRes.json();
+        if (data.ok && Array.isArray(data.jobs)) {
+          setActiveJobs(data.jobs);
+        }
+      }
+
+      if (historyRes.ok) {
+        const hData = await historyRes.json();
+        if (hData.ok && Array.isArray(hData.jobs)) {
+          setQueueHistory(hData.jobs);
+        }
+      }
+    } catch (e) {
+      console.error("Error fetching queue data:", e);
+    }
+  };
 
   const getRSSUrl = (ch: AccountChannel) => {
     return `${API_BASE}/api/pinterest/rss/${ch.id}?domain=${encodeURIComponent(ch.claimedDomain)}`;
   };
 
-  const handleAddAccount = () => {
+  const handleAddAccount = async () => {
     if (!newAccountName.trim()) {
       alert("Please enter an account name.");
       return;
@@ -75,12 +174,120 @@ export default function PinterestAutoPilotManager() {
       styles: ["Modern Scandinavian", "Boho Chic"],
       model: "flux"
     };
-    setChannels([...channels, newCh]);
+    const updated = [...channels, newCh];
+    setChannels(updated);
     setNewAccountName("");
+
+    try {
+      await fetch(`${API_BASE}/api/pinterest/channels`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: newCh.id,
+          name: newCh.name,
+          niche: newCh.niche,
+          nicheId: newNicheId,
+          claimedDomain: newCh.claimedDomain,
+          dailyPinLimit: newCh.dailyPinLimit,
+          keywords: newCh.keywords.split(",").map(k => k.trim()).filter(Boolean),
+          themes: newCh.themes,
+          styles: newCh.styles,
+          model: newCh.model
+        })
+      });
+      fetchChannelsAndNiches();
+    } catch (e) {
+      console.error("Error saving channel:", e);
+    }
   };
 
-  const handleDeleteAccount = (id: string) => {
-    setChannels(channels.filter(c => c.id !== id));
+  const handleDeleteAccount = async (id: string) => {
+    const runningForChannel = activeJobs.filter(j => (j.channelId === id || j.jobId.includes(id)) && j.status === "running");
+    
+    let confirmMsg = `Are you sure you want to remove account channel "${id}"?`;
+    if (runningForChannel.length > 0) {
+      confirmMsg = `⚠️ This channel has ${runningForChannel.length} active running queue tasks. Deleting this channel will CANCEL all running jobs. Proceed?`;
+    }
+
+    if (!confirm(confirmMsg)) return;
+
+    const updated = channels.filter(c => c.id !== id);
+    setChannels(updated);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/pinterest/autopilot/${encodeURIComponent(id)}`, {
+        method: "DELETE"
+      });
+      const data = await res.json();
+      if (data.cancelledJobs > 0) {
+        setLogs(prev => [...prev, `🛑 Cancelled ${data.cancelledJobs} active jobs for channel ${id}`]);
+      }
+      fetchChannelsAndNiches();
+      fetchQueueData();
+    } catch (e) {
+      console.error("Error deleting channel:", e);
+    }
+  };
+
+  const handleCancelJob = async (jobId: string) => {
+    if (!confirm(`Cancel running job "${jobId}"?`)) return;
+
+    setCancellingJobId(jobId);
+    try {
+      const res = await fetch(`${API_BASE}/api/pinterest/queue/${encodeURIComponent(jobId)}/cancel`, {
+        method: "POST"
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setLogs(prev => [...prev, `🛑 Successfully cancelled job ${jobId}`]);
+        // Optimistically update local active jobs
+        setActiveJobs(prev => prev.map(j => j.jobId === jobId ? { ...j, status: "cancelled" } : j));
+        setTimeout(fetchQueueData, 1000);
+      }
+    } catch (e: any) {
+      alert(`Error cancelling job: ${e.message}`);
+    } finally {
+      setCancellingJobId(null);
+    }
+  };
+
+  const formatDuration = (ms?: number) => {
+    if (!ms || ms <= 0) return "< 1s";
+    const seconds = Math.floor(ms / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSecs = seconds % 60;
+    if (minutes < 60) return `${minutes}m ${remainingSecs}s`;
+    const hours = Math.floor(minutes / 60);
+    const remainingMins = minutes % 60;
+    return `${hours}h ${remainingMins}m`;
+  };
+
+  const handleDeleteJob = async (jobId: string, pinsCount?: number) => {
+    const pinText = pinsCount ? ` and its ${pinsCount} generated pin(s)` : "";
+    if (!confirm(`Are you sure you want to permanently remove job "${jobId}"${pinText}?\n\nThis will delete metadata from KV, records from database, and generated image files.`)) {
+      return;
+    }
+
+    setDeletingJobId(jobId);
+    try {
+      const res = await fetch(`${API_BASE}/api/pinterest/queue/${encodeURIComponent(jobId)}`, {
+        method: "DELETE"
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setLogs(prev => [...prev, `🗑️ Permanently removed job ${jobId} (deleted ${data.deletedPins || 0} pin records)`]);
+        setActiveJobs(prev => prev.filter(j => j.jobId !== jobId));
+        setQueueHistory(prev => prev.filter(j => j.jobId !== jobId));
+        setTimeout(fetchQueueData, 1000);
+      } else {
+        alert(`Failed to delete job: ${data.error || "Unknown error"}`);
+      }
+    } catch (e: any) {
+      alert(`Error deleting job: ${e.message}`);
+    } finally {
+      setDeletingJobId(null);
+    }
   };
 
   const copyToClipboard = (text: string, id: string) => {
@@ -91,8 +298,7 @@ export default function PinterestAutoPilotManager() {
 
   const handleRunAutoPilot = async () => {
     setIsRunning(true);
-    setLogs(["⚡ Initiating Multi-Account Auto-Pilot generation..."]);
-    setGeneratedResults([]);
+    setLogs(["⚡ Initiating Multi-Account Auto-Pilot queue run..."]);
 
     try {
       const payloadChannels = channels.map(c => ({
@@ -107,7 +313,7 @@ export default function PinterestAutoPilotManager() {
         model: c.model
       }));
 
-      setLogs(prev => [...prev, `🔄 Processing ${channels.length} account channels in parallel matrix batches...`]);
+      setLogs(prev => [...prev, `🔄 Enqueueing ${channels.length} account channels to unified Pinterest Queue...`]);
 
       const res = await fetch(`${API_BASE}/api/pinterest/autopilot/run`, {
         method: "POST",
@@ -119,12 +325,10 @@ export default function PinterestAutoPilotManager() {
       if (data.ok) {
         setLogs(prev => [
           ...prev,
-          `🎉 Success! Generated ${data.generatedCount} unique non-duplicate daily Pins across all account channels!`,
-          `📡 Dynamic RSS Feeds updated automatically for Pinterest auto-publishing.`
+          `🎉 Enqueued ${data.jobsCount || data.jobs?.length || channels.length} channel jobs into unified Pinterest Queue!`,
+          `📡 Processing in background. Watch live progress in the Running Queues panel below.`
         ]);
-        if (data.items) {
-          setGeneratedResults(data.items.map((i: any) => i.item));
-        }
+        fetchQueueData();
       } else {
         setLogs(prev => [...prev, `❌ Auto-Pilot Error: ${data.error}`]);
       }
@@ -146,10 +350,10 @@ export default function PinterestAutoPilotManager() {
           </div>
           <div>
             <h1 style={{ fontSize: "28px", fontWeight: "800", color: "var(--text-primary)", margin: 0 }}>
-              Multi-Account Pinterest Auto-Pilot
+              Multi-Account Pinterest Auto-Pilot & Queue Manager
             </h1>
             <p style={{ color: "var(--text-secondary)", fontSize: "15px", marginTop: "4px" }}>
-              Automate daily Pin creation for multiple Pinterest accounts per niche with 0 content duplication.
+              Unified Pinterest automation engine: daily scheduled pins, live queue monitor, and instant cancellation.
             </p>
           </div>
         </div>
@@ -160,7 +364,7 @@ export default function PinterestAutoPilotManager() {
           disabled={isRunning}
           style={{ backgroundColor: "#E60023", color: "white", padding: "12px 24px", fontWeight: "700", fontSize: "15px", borderRadius: "10px", display: "flex", alignItems: "center", gap: "8px" }}
         >
-          {isRunning ? "🔄 Generating Daily Pins..." : "⚡ Run Auto-Pilot Now (All Accounts)"}
+          {isRunning ? "🔄 Enqueueing..." : "⚡ Run Auto-Pilot Now (All Accounts)"}
         </button>
       </div>
 
@@ -169,10 +373,10 @@ export default function PinterestAutoPilotManager() {
         <div style={{ fontSize: "26px" }}>🛡️</div>
         <div>
           <h3 style={{ fontSize: "15px", fontWeight: "700", color: "var(--text-primary)", margin: "0 0 4px 0" }}>
-            Zero-Duplication Multi-Account Architecture Enabled
+            Unified Zero-Duplication Queue Architecture
           </h3>
           <p style={{ fontSize: "13px", color: "var(--text-secondary)", margin: 0, lineHeight: "1.5" }}>
-            Each Pinterest Account Channel receives distinct keyword/theme matrix allocations, unique AI image prompts, and isolated RSS feed URLs. Account A and Account B will <strong>never post duplicate images or text</strong>.
+            Both Autopilot recipes and Batch matrix permutations feed into the single <strong>pinterest-jobs</strong> queue. Each account receives distinct keyword/theme allocations and isolated RSS feeds.
           </p>
         </div>
       </div>
@@ -185,6 +389,320 @@ export default function PinterestAutoPilotManager() {
           ))}
         </div>
       )}
+
+      {/* ── LIVE RUNNING QUEUES & ACTIVE JOBS PANEL ──────────────────────── */}
+      <div className="card" style={{ padding: "24px", borderRadius: "16px", border: "1px solid var(--border-default)", backgroundColor: "var(--bg-primary)", marginBottom: "32px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+            <span style={{ fontSize: "20px" }}>🔄</span>
+            <h2 style={{ fontSize: "18px", fontWeight: "700", color: "var(--text-primary)", margin: 0 }}>
+              Live Running Queues & Tasks ({activeJobs.length})
+            </h2>
+            {activeJobs.length > 0 && (
+              <span style={{ backgroundColor: "#FEF3C7", color: "#B45309", padding: "3px 10px", borderRadius: "12px", fontSize: "12px", fontWeight: "700", animation: "pulse 2s infinite" }}>
+                ● Active Processing
+              </span>
+            )}
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            {/* Active Queue Filter Pills */}
+            <div style={{ display: "flex", backgroundColor: "var(--bg-secondary)", padding: "3px", borderRadius: "8px", border: "1px solid var(--border-default)", gap: "2px" }}>
+              {(["all", "batch", "autopilot"] as const).map((filterKey) => {
+                const count = filterKey === "all"
+                  ? activeJobs.length
+                  : activeJobs.filter(j => (j.type || "batch") === filterKey).length;
+                const isSel = activeFilter === filterKey;
+                return (
+                  <button
+                    key={filterKey}
+                    onClick={() => setActiveFilter(filterKey)}
+                    style={{
+                      padding: "4px 10px",
+                      fontSize: "11px",
+                      fontWeight: isSel ? "700" : "500",
+                      borderRadius: "6px",
+                      border: "none",
+                      backgroundColor: isSel ? "var(--bg-primary)" : "transparent",
+                      color: isSel ? "var(--text-primary)" : "var(--text-secondary)",
+                      cursor: "pointer",
+                      boxShadow: isSel ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                      textTransform: "capitalize"
+                    }}
+                  >
+                    {filterKey} ({count})
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={fetchQueueData}
+              className="btn btn-secondary"
+              style={{ fontSize: "12px", padding: "6px 12px" }}
+            >
+              🔄 Refresh Queue
+            </button>
+          </div>
+        </div>
+
+        {activeJobs.length === 0 ? (
+          <div style={{ padding: "24px", textAlign: "center", borderRadius: "10px", backgroundColor: "var(--bg-secondary)", color: "var(--text-secondary)", fontSize: "13px" }}>
+            ✅ No active Pinterest queues currently running. All automated and batch tasks are completed.
+          </div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+            {activeJobs
+              .filter(j => activeFilter === "all" || (j.type || "batch") === activeFilter)
+              .map((job) => {
+                const progress = job.total > 0 ? Math.round(((job.completed || 0) + (job.failed || 0)) / job.total * 100) : 0;
+                const isCancelling = cancellingJobId === job.jobId;
+                const isDeleting = deletingJobId === job.jobId;
+                const elapsed = job.elapsedMs || (job.createdAt ? Math.max(0, Date.now() - new Date(job.createdAt).getTime()) : 0);
+
+                // Format keywords as array
+                const kwList = Array.isArray(job.keywords)
+                  ? job.keywords
+                  : (typeof job.keywords === "string" ? job.keywords.split(",").map(k => k.trim()) : []);
+
+                const thList = Array.isArray(job.themes) ? job.themes : [];
+                const stList = Array.isArray(job.styles) ? job.styles : [];
+
+                return (
+                  <div
+                    key={job.jobId}
+                    style={{
+                      padding: "20px",
+                      borderRadius: "14px",
+                      border: "1px solid var(--border-default)",
+                      backgroundColor: "var(--bg-secondary)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "14px",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.03)"
+                    }}
+                  >
+                    {/* Row 1: Header + Badges + Actions */}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: "10px" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                          <span
+                            style={{
+                              backgroundColor: job.type === "autopilot" ? "#FEE2E2" : "#DBEAFE",
+                              color: job.type === "autopilot" ? "#DC2626" : "#2563EB",
+                              padding: "4px 9px",
+                              borderRadius: "6px",
+                              fontSize: "11px",
+                              fontWeight: "800",
+                              letterSpacing: "0.5px",
+                              textTransform: "uppercase"
+                            }}
+                          >
+                            {job.type || "BATCH"}
+                          </span>
+
+                          <span style={{ fontSize: "16px", fontWeight: "700", color: "var(--text-primary)" }}>
+                            🏢 {job.channelName || (job.channelId ? `Account: ${job.channelId}` : "Ad-Hoc Batch")}
+                          </span>
+
+                          {job.channelId && (
+                            <span style={{ fontSize: "12px", color: "var(--text-secondary)", fontFamily: "monospace", backgroundColor: "var(--bg-primary)", padding: "2px 8px", borderRadius: "6px", border: "1px solid var(--border-default)" }}>
+                              #{job.channelId}
+                            </span>
+                          )}
+
+                          {job.claimedDomain && (
+                            <span style={{ fontSize: "12px", color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: "4px" }}>
+                              🌐 {job.claimedDomain}
+                            </span>
+                          )}
+
+                          {/* Elapsed Running Time Badge */}
+                          <span
+                            style={{
+                              fontSize: "11px",
+                              fontWeight: "700",
+                              padding: "2px 8px",
+                              borderRadius: "6px",
+                              backgroundColor: "rgba(245, 158, 11, 0.15)",
+                              color: "#B45309",
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: "4px"
+                            }}
+                          >
+                            ⏱ Running: {formatDuration(elapsed)}
+                          </span>
+                        </div>
+
+                        <div style={{ fontSize: "12px", color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: "10px", flexWrap: "wrap" }}>
+                          <span>Job ID: <code style={{ fontSize: "11px" }}>{job.jobId}</code></span>
+                          {job.createdAt && (
+                            <span>• Started: {new Date(job.createdAt).toLocaleTimeString()}</span>
+                          )}
+                        </div>
+                      </div>
+
+                      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+                        <div style={{ textAlign: "right" }}>
+                          <span style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-primary)" }}>
+                            {job.completed || 0} / {job.total} pins
+                          </span>
+                          <span style={{ fontSize: "12px", color: "var(--text-secondary)", marginLeft: "6px" }}>
+                            ({progress}%)
+                          </span>
+                        </div>
+
+                        <button
+                          onClick={() => handleCancelJob(job.jobId)}
+                          disabled={isCancelling || isDeleting}
+                          className="btn"
+                          style={{
+                            backgroundColor: "#EF4444",
+                            color: "white",
+                            padding: "8px 14px",
+                            fontSize: "12px",
+                            fontWeight: "700",
+                            borderRadius: "8px",
+                            border: "none",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "6px"
+                          }}
+                        >
+                          {isCancelling ? "Cancelling..." : "🛑 Cancel"}
+                        </button>
+
+                        <button
+                          onClick={() => handleDeleteJob(job.jobId, job.completed)}
+                          disabled={isCancelling || isDeleting}
+                          className="btn"
+                          title="Permanently remove job, clear queue metadata and delete generated pins"
+                          style={{
+                            backgroundColor: "transparent",
+                            border: "1px solid #DC2626",
+                            color: "#DC2626",
+                            padding: "8px 12px",
+                            fontSize: "12px",
+                            fontWeight: "700",
+                            borderRadius: "8px",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "4px"
+                          }}
+                        >
+                          {isDeleting ? "Deleting..." : "🗑️ Delete"}
+                        </button>
+                      </div>
+                    </div>
+
+                  {/* Row 2: Niche Library & Prompts Context Box */}
+                  <div
+                    style={{
+                      padding: "12px 16px",
+                      borderRadius: "10px",
+                      backgroundColor: "var(--bg-primary)",
+                      border: "1px solid var(--border-default)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: "8px",
+                      fontSize: "12px"
+                    }}
+                  >
+                    {/* Niche Library Tag */}
+                    <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                      <span style={{ fontWeight: "700", color: "var(--text-secondary)" }}>📚 Niche Library:</span>
+                      <span
+                        style={{
+                          backgroundColor: "rgba(13, 148, 136, 0.1)",
+                          color: "#0F766E",
+                          padding: "3px 10px",
+                          borderRadius: "6px",
+                          fontWeight: "700"
+                        }}
+                      >
+                        ✨ {job.niche || "Home Decor"}
+                      </span>
+
+                      <span style={{ fontWeight: "700", color: "var(--text-secondary)", marginLeft: "8px" }}>🤖 AI Model:</span>
+                      <span
+                        style={{
+                          backgroundColor: "rgba(99, 102, 241, 0.1)",
+                          color: "#4338CA",
+                          padding: "3px 8px",
+                          borderRadius: "6px",
+                          fontWeight: "700"
+                        }}
+                      >
+                        {(job.model || "flux").toUpperCase()}
+                      </span>
+                    </div>
+
+                    {/* Keywords Chips */}
+                    {kwList.length > 0 && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "6px", flexWrap: "wrap" }}>
+                        <span style={{ fontWeight: "700", color: "var(--text-secondary)" }}>🏷️ Keywords:</span>
+                        {kwList.slice(0, 6).map((kw, i) => (
+                          <span
+                            key={i}
+                            style={{
+                              backgroundColor: "var(--bg-secondary)",
+                              color: "var(--text-primary)",
+                              padding: "2px 8px",
+                              borderRadius: "6px",
+                              border: "1px solid var(--border-default)",
+                              fontSize: "11px"
+                            }}
+                          >
+                            {kw}
+                          </span>
+                        ))}
+                        {kwList.length > 6 && (
+                          <span style={{ color: "var(--text-secondary)", fontSize: "11px" }}>
+                            +{kwList.length - 6} more
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Themes & Styles Chips */}
+                    {(thList.length > 0 || stList.length > 0) && (
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", flexWrap: "wrap" }}>
+                        {thList.length > 0 && (
+                          <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                            <span style={{ fontWeight: "700", color: "var(--text-secondary)" }}>🎨 Themes:</span>
+                            <span style={{ color: "var(--text-primary)" }}>{thList.slice(0, 3).join(", ")}</span>
+                          </div>
+                        )}
+                        {stList.length > 0 && (
+                          <div style={{ display: "flex", alignItems: "center", gap: "4px", marginLeft: thList.length > 0 ? "8px" : "0" }}>
+                            <span style={{ fontWeight: "700", color: "var(--text-secondary)" }}>✨ Styles:</span>
+                            <span style={{ color: "var(--text-primary)" }}>{stList.slice(0, 3).join(", ")}</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Row 3: Progress Bar */}
+                  <div style={{ width: "100%", height: "8px", borderRadius: "4px", backgroundColor: "#E5E7EB", overflow: "hidden" }}>
+                    <div
+                      style={{
+                        width: `${progress}%`,
+                        height: "100%",
+                        backgroundColor: "#E60023",
+                        transition: "width 0.3s ease"
+                      }}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Create New Account Channel */}
       <div className="card" style={{ padding: "24px", borderRadius: "16px", border: "1px solid var(--border-default)", backgroundColor: "var(--bg-primary)", marginBottom: "32px" }}>
@@ -208,18 +726,34 @@ export default function PinterestAutoPilotManager() {
 
           <div>
             <label style={{ fontSize: "13px", fontWeight: "600", color: "var(--text-primary)", display: "block", marginBottom: "6px" }}>
-              Niche Category
+              Niche Category / AI Library
             </label>
             <select
               className="input"
               value={newNiche}
-              onChange={(e) => setNewNiche(e.target.value)}
+              onChange={(e) => {
+                const val = e.target.value;
+                setNewNiche(val);
+                const match = niches.find(n => n.name === val);
+                setNewNicheId(match ? match.id : null);
+              }}
               style={{ width: "100%" }}
             >
-              <option value="Home Decor">🛋️ Home Decor</option>
-              <option value="Cake Decorating">🎂 Cake Decorating</option>
-              <option value="Cooking Recipes">🍳 Cooking Recipes</option>
-              <option value="Fashion & Apparel">👗 Fashion & Apparel</option>
+              {niches.length > 0 && (
+                <optgroup label="📚 AI Niche Libraries">
+                  {niches.map((n) => (
+                    <option key={n.id} value={n.name}>
+                      ✨ {n.name}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              <optgroup label="Standard Categories">
+                <option value="Home Decor">🛋️ Home Decor</option>
+                <option value="Cake Decorating">🎂 Cake Decorating</option>
+                <option value="Cooking Recipes">🍳 Cooking Recipes</option>
+                <option value="Fashion & Apparel">👗 Fashion & Apparel</option>
+              </optgroup>
             </select>
           </div>
 
@@ -247,6 +781,7 @@ export default function PinterestAutoPilotManager() {
               onChange={(e) => setNewLimit(parseInt(e.target.value, 10))}
               style={{ width: "100%" }}
             >
+              <option value={5}>5 Pins / day</option>
               <option value={10}>10 Pins / day</option>
               <option value={20}>20 Pins / day</option>
               <option value={50}>50 Pins / day</option>
@@ -268,19 +803,47 @@ export default function PinterestAutoPilotManager() {
 
       {/* Account Channels Grid */}
       <div style={{ display: "flex", flexDirection: "column", gap: "20px" }}>
-        <h2 style={{ fontSize: "20px", fontWeight: "700", color: "var(--text-primary)", margin: 0 }}>
-          📌 Account Channels Configured ({channels.length})
-        </h2>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h2 style={{ fontSize: "20px", fontWeight: "700", color: "var(--text-primary)", margin: 0 }}>
+            📌 Account Channels Configured ({channels.length})
+          </h2>
+          {isLoading && (
+            <span style={{ fontSize: "13px", color: "var(--text-secondary)" }}>
+              🔄 Syncing with Cloudflare...
+            </span>
+          )}
+        </div>
+
+        {channels.length === 0 && !isLoading && (
+          <div className="card" style={{ padding: "32px", textAlign: "center", borderRadius: "14px", border: "1px dashed var(--border-default)", color: "var(--text-secondary)" }}>
+            <p style={{ margin: 0, fontSize: "14px" }}>
+              No account channels configured yet. Add an account channel above to configure daily pin generation!
+            </p>
+          </div>
+        )}
 
         {channels.map((ch) => {
           const rssUrl = getRSSUrl(ch);
+          const activeJob = activeJobs.find(j => (j.channelId === ch.id || j.jobId.includes(ch.id)) && j.status === "running");
+
           return (
             <div key={ch.id} className="card" style={{ padding: "24px", borderRadius: "16px", border: "1px solid var(--border-default)", backgroundColor: "var(--bg-primary)", display: "flex", flexDirection: "column", gap: "16px" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
-                  <h3 style={{ fontSize: "18px", fontWeight: "700", color: "var(--text-primary)", margin: 0 }}>
-                    {ch.name}
-                  </h3>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                    <span style={{ color: activeJob ? "#F59E0B" : "#10B981", fontSize: "14px" }}>
+                      {activeJob ? "🟠" : "🟢"}
+                    </span>
+                    <h3 style={{ fontSize: "18px", fontWeight: "700", color: "var(--text-primary)", margin: 0 }}>
+                      {ch.name}
+                    </h3>
+                    {activeJob && (
+                      <span style={{ backgroundColor: "#FEF3C7", color: "#B45309", padding: "2px 8px", borderRadius: "10px", fontSize: "11px", fontWeight: "700" }}>
+                        Queue Running ({activeJob.completed || 0}/{activeJob.total})
+                      </span>
+                    )}
+                  </div>
+
                   <div style={{ display: "flex", gap: "12px", marginTop: "6px", fontSize: "13px", color: "var(--text-secondary)" }}>
                     <span>📁 Niche: <strong>{ch.niche}</strong></span>
                     <span>•</span>
@@ -296,7 +859,7 @@ export default function PinterestAutoPilotManager() {
                   onClick={() => handleDeleteAccount(ch.id)}
                   style={{ background: "none", border: "none", color: "var(--error)", cursor: "pointer", fontSize: "13px", fontWeight: "600" }}
                 >
-                  Remove Account
+                  {activeJob ? "🛑 Stop & Delete Recipe" : "Remove Account"}
                 </button>
               </div>
 
@@ -347,33 +910,200 @@ export default function PinterestAutoPilotManager() {
         })}
       </div>
 
-      {/* Live Preview Gallery */}
-      {generatedResults.length > 0 && (
-        <div style={{ marginTop: "40px" }}>
-          <h2 style={{ fontSize: "22px", fontWeight: "700", color: "var(--text-primary)", marginBottom: "16px" }}>
-            🎉 Newly Generated Auto-Pilot Creatives ({generatedResults.length})
-          </h2>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: "20px" }}>
-            {generatedResults.map((item: any) => (
-              <div key={item.id} className="card" style={{ padding: "14px", borderRadius: "12px", border: "1px solid var(--border-default)", backgroundColor: "var(--bg-primary)", display: "flex", flexDirection: "column", gap: "10px" }}>
-                <div style={{ width: "100%", height: "220px", borderRadius: "8px", overflow: "hidden", backgroundColor: "#F3F4F6" }}>
-                  <img
-                    src={item.generatedImageUrl}
-                    alt={item.seoAltText || item.keyword}
-                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                  />
-                </div>
-                <div style={{ fontSize: "14px", fontWeight: "700", color: "var(--text-primary)", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>
-                  {item.seoTitle}
-                </div>
-                <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-                  Channel: <strong>{item.accountChannelId || "Default"}</strong>
-                </div>
-              </div>
-            ))}
+      {/* ── QUEUE EXECUTION HISTORY TABLE ─────────────────────────────────── */}
+      <div className="card" style={{ padding: "24px", borderRadius: "16px", border: "1px solid var(--border-default)", backgroundColor: "var(--bg-primary)", marginTop: "40px" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", flexWrap: "wrap", gap: "12px" }}>
+          <div>
+            <h2 style={{ fontSize: "18px", fontWeight: "700", color: "var(--text-primary)", margin: 0 }}>
+              📊 Recent Automation & Queue History
+            </h2>
+            <p style={{ color: "var(--text-secondary)", fontSize: "13px", marginTop: "4px" }}>
+              Audit log of daily autopilot triggers, batch jobs, progress, duration, and completion states.
+            </p>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            {/* History Filter Pills */}
+            <div style={{ display: "flex", backgroundColor: "var(--bg-secondary)", padding: "3px", borderRadius: "8px", border: "1px solid var(--border-default)", gap: "2px" }}>
+              {(["all", "batch", "autopilot"] as const).map((filterKey) => {
+                const count = filterKey === "all"
+                  ? queueHistory.length
+                  : queueHistory.filter(j => (j.type || "batch") === filterKey).length;
+                const isSel = historyFilter === filterKey;
+                return (
+                  <button
+                    key={filterKey}
+                    onClick={() => setHistoryFilter(filterKey)}
+                    style={{
+                      padding: "4px 10px",
+                      fontSize: "11px",
+                      fontWeight: isSel ? "700" : "500",
+                      borderRadius: "6px",
+                      border: "none",
+                      backgroundColor: isSel ? "var(--bg-primary)" : "transparent",
+                      color: isSel ? "var(--text-primary)" : "var(--text-secondary)",
+                      cursor: "pointer",
+                      boxShadow: isSel ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+                      textTransform: "capitalize"
+                    }}
+                  >
+                    {filterKey} ({count})
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={fetchQueueData}
+              className="btn btn-secondary"
+              style={{ fontSize: "12px", padding: "6px 12px" }}
+            >
+              🔄 Refresh History
+            </button>
           </div>
         </div>
-      )}
+
+        {queueHistory.length === 0 ? (
+          <div style={{ padding: "20px", textAlign: "center", color: "var(--text-secondary)", fontSize: "13px" }}>
+            No previous queue execution history logged yet.
+          </div>
+        ) : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "13px" }}>
+              <thead>
+                <tr style={{ borderBottom: "1px solid var(--border-default)", textAlign: "left", color: "var(--text-secondary)" }}>
+                  <th style={{ padding: "10px" }}>Job ID / Type</th>
+                  <th style={{ padding: "10px" }}>Channel / Target</th>
+                  <th style={{ padding: "10px" }}>Status</th>
+                  <th style={{ padding: "10px" }}>Progress</th>
+                  <th style={{ padding: "10px" }}>Created & Duration</th>
+                  <th style={{ padding: "10px", textAlign: "right" }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {queueHistory
+                  .filter(j => historyFilter === "all" || (j.type || "batch") === historyFilter)
+                  .map((job) => {
+                    let statusBg = "#D1FAE5";
+                    let statusColor = "#065F46";
+                    let statusLabel = "Completed";
+
+                    if (job.status === "running") {
+                      statusBg = "#FEF3C7";
+                      statusColor = "#B45309";
+                      statusLabel = "Running";
+                    } else if (job.status === "cancelled") {
+                      statusBg = "#FEE2E2";
+                      statusColor = "#DC2626";
+                      statusLabel = "Cancelled";
+                    } else if (job.status === "failed") {
+                      statusBg = "#FEE2E2";
+                      statusColor = "#DC2626";
+                      statusLabel = "Failed";
+                    }
+
+                    const isDeleting = deletingJobId === job.jobId;
+                    const isCancelling = cancellingJobId === job.jobId;
+
+                    return (
+                      <tr key={job.jobId} style={{ borderBottom: "1px solid var(--border-default)" }}>
+                        <td style={{ padding: "12px 10px", fontWeight: "600" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                            <span
+                              style={{
+                                fontSize: "10px",
+                                padding: "2px 6px",
+                                borderRadius: "4px",
+                                backgroundColor: job.type === "autopilot" ? "#FEE2E2" : "#DBEAFE",
+                                color: job.type === "autopilot" ? "#DC2626" : "#2563EB",
+                                fontWeight: "700"
+                              }}
+                            >
+                              {(job.type || "batch").toUpperCase()}
+                            </span>
+                            <span style={{ fontFamily: "monospace", fontSize: "12px" }}>
+                              {job.jobId.length > 20 ? `${job.jobId.slice(0, 18)}...` : job.jobId}
+                            </span>
+                          </div>
+                        </td>
+                        <td style={{ padding: "12px 10px" }}>
+                          <div style={{ fontWeight: "600", color: "var(--text-primary)" }}>
+                            {job.channelName || (job.channelId ? `Account: ${job.channelId}` : "Ad-Hoc Batch")}
+                          </div>
+                          <div style={{ fontSize: "11px", color: "var(--text-secondary)", display: "flex", alignItems: "center", gap: "6px", marginTop: "2px" }}>
+                            <span style={{ color: "#0F766E", fontWeight: "600" }}>✨ {job.niche || "Home Decor"}</span>
+                            {job.claimedDomain && <span>• 🌐 {job.claimedDomain.replace(/^https?:\/\//, "")}</span>}
+                          </div>
+                        </td>
+                        <td style={{ padding: "12px 10px" }}>
+                          <span style={{ backgroundColor: statusBg, color: statusColor, padding: "3px 10px", borderRadius: "12px", fontWeight: "700", fontSize: "11px" }}>
+                            {statusLabel}
+                          </span>
+                        </td>
+                        <td style={{ padding: "12px 10px" }}>
+                          <span style={{ fontWeight: "600" }}>{job.completed || 0}</span> / {job.total} pins
+                          {job.failed ? <span style={{ color: "#DC2626", fontSize: "11px", marginLeft: "4px" }}>({job.failed} failed)</span> : null}
+                        </td>
+                        <td style={{ padding: "12px 10px", color: "var(--text-secondary)", fontSize: "12px" }}>
+                          <div>{job.createdAt ? new Date(job.createdAt).toLocaleString() : "—"}</div>
+                          {job.elapsedMs ? (
+                            <div style={{ fontSize: "11px", color: "#6B7280", marginTop: "2px", display: "flex", alignItems: "center", gap: "3px" }}>
+                              <span>⏱ Duration:</span>
+                              <span style={{ fontWeight: "600", color: "var(--text-primary)" }}>{formatDuration(job.elapsedMs)}</span>
+                            </div>
+                          ) : null}
+                        </td>
+                        <td style={{ padding: "12px 10px", textAlign: "right" }}>
+                          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "6px" }}>
+                            {job.status === "running" && (
+                              <button
+                                onClick={() => handleCancelJob(job.jobId)}
+                                disabled={isCancelling || isDeleting}
+                                style={{
+                                  background: "none",
+                                  border: "1px solid #DC2626",
+                                  color: "#DC2626",
+                                  padding: "4px 8px",
+                                  borderRadius: "6px",
+                                  fontSize: "11px",
+                                  fontWeight: "700",
+                                  cursor: "pointer"
+                                }}
+                              >
+                                {isCancelling ? "Cancelling..." : "🛑 Cancel"}
+                              </button>
+                            )}
+
+                            <button
+                              onClick={() => handleDeleteJob(job.jobId, job.completed)}
+                              disabled={isCancelling || isDeleting}
+                              title="Permanently remove job and purge generated pins"
+                              style={{
+                                background: "none",
+                                border: "1px solid var(--border-default)",
+                                color: "#DC2626",
+                                padding: "4px 8px",
+                                borderRadius: "6px",
+                                fontSize: "11px",
+                                fontWeight: "600",
+                                cursor: "pointer",
+                                display: "inline-flex",
+                                alignItems: "center",
+                                gap: "3px"
+                              }}
+                            >
+                              {isDeleting ? "Deleting..." : "🗑️ Delete"}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -14,7 +14,8 @@
     "bcryptjs": "^3.0.3",
     "drizzle-orm": "^0.33.0",
     "hono": "^4.6.1",
-    "satori": "^0.12.1"
+    "satori": "^0.12.1",
+    "unpdf": "^0.12.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20240909.0",

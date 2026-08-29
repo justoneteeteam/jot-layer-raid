@@ -1,0 +1,8 @@
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+tests/
+test/
+*.py
+*.png

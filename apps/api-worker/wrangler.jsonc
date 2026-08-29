@@ -50,6 +50,11 @@
       }
     ]
   },
+  "send_email": [
+    {
+      "name": "EMAIL"
+    }
+  ],
   "vars": {
     "TELEGRAM_BOT_TOKEN": "8882930959:AAHsK_WL5CF0_Et8ZRuFS9EnCFdlRryiwdM",
     "TELEGRAM_CHAT_ID": "-1003926357837",
@@ -59,7 +64,7 @@
   },
   "triggers": {
     "crons": [
-      "0 0 * * 1"
+      "0 0 * * *"
     ]
   }
 }

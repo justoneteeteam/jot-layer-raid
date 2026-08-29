@@ -1,4 +1,4 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
 
 export interface Team {
   id: number;
@@ -64,10 +64,15 @@ function getHeaders(customHeaders: HeadersInit = {}): HeadersInit {
 
 async function apiFetch(path: string, options: RequestInit = {}) {
   const headers = getHeaders(options.headers);
-  return fetch(`${API_BASE}${path}`, {
+  const method = (options.method || "GET").toUpperCase();
+  const fetchOptions: RequestInit = {
     ...options,
     headers,
-  });
+  };
+  if (method === "GET" && !fetchOptions.cache && !fetchOptions.next) {
+    fetchOptions.next = { revalidate: 60 };
+  }
+  return fetch(`${API_BASE}${path}`, fetchOptions);
 }
 
 export async function fetchTeams(): Promise<Team[]> {
@@ -136,18 +141,22 @@ export interface Store {
   name: string;
   platform: string;
   url: string;
+  webhook_url?: string;
+  webhookUrl?: string;
   is_active: boolean;
   apiKey?: string;
   apiSecret?: string;
 }
 
 export async function fetchStores(): Promise<Store[]> {
-  const res = await apiFetch("/api/stores");
+  const res = await apiFetch(`/api/stores?_t=${Date.now()}`, {
+    cache: "no-store"
+  });
   if (!res.ok) throw new Error("Failed to fetch stores");
   return res.json();
 }
 
-export async function createStore(data: { name: string; platform: string; url: string; api_key: string; api_secret: string }): Promise<Store> {
+export async function createStore(data: { name: string; platform: string; url: string; api_key: string; api_secret: string; webhook_url?: string }): Promise<Store> {
   const res = await apiFetch("/api/stores", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -157,7 +166,7 @@ export async function createStore(data: { name: string; platform: string; url: s
   return res.json();
 }
 
-export async function updateStore(id: number, data: { name?: string; url?: string; api_key?: string; api_secret?: string }): Promise<{ updated: number }> {
+export async function updateStore(id: number, data: { name?: string; url?: string; api_key?: string; api_secret?: string; webhook_url?: string }): Promise<{ updated: number }> {
   const res = await apiFetch(`/api/stores/${id}`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },

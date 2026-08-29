@@ -12,12 +12,14 @@ interface Stats {
 }
 
 const ACTION_CARDS = [
-  { href: "/pinterest/generate", icon: "✨", title: "Generate", desc: "Create new Pinterest pins with AI" },
-  { href: "/pinterest/batch", icon: "📦", title: "Batch Generate", desc: "Generate multiple pins at once" },
-  { href: "/pinterest/trends", icon: "📈", title: "Trend Research", desc: "Analyze current Pinterest trends" },
-  { href: "/pinterest/prompts", icon: "📝", title: "Prompt Library", desc: "Manage saved generation prompts" },
-  { href: "/pinterest/themes", icon: "🎨", title: "Theme Library", desc: "Manage seasonal and style themes" },
-  { href: "/pinterest/history", icon: "🕰️", title: "History", desc: "View previously generated pins" },
+  { href: "/pinterest/niches", icon: "📚", title: "Niche Libraries", desc: "AI-generated content libraries by niche (Themes, Styles, Content Types, Recipes)" },
+  { href: "/pinterest/batch", icon: "📦", title: "Batch Generate", desc: "Generate multiple pins at once across niches" },
+  { href: "/pinterest/generate", icon: "✨", title: "Single Pin Generator", desc: "Create individual Pinterest pins with AI" },
+  { href: "/pinterest/prompts", icon: "📝", title: "Style Library", desc: "Manage visual styles and prompt engineering presets" },
+  { href: "/pinterest/themes", icon: "🎨", title: "Theme Library", desc: "Manage content themes and angles" },
+  { href: "/pinterest/history", icon: "🕰️", title: "History", desc: "View previously generated pins and SEO data" },
+  { href: "/pinterest/autopilot", icon: "⚡", title: "Auto-Pilot", desc: "Automated multi-account pin generation" },
+  { href: "/pinterest/rss", icon: "📡", title: "RSS Feeds", desc: "Pinterest auto-publishing RSS 2.0 XML feeds" },
 ];
 
 export default function PinterestDashboard() {
@@ -34,7 +36,7 @@ export default function PinterestDashboard() {
     const fetchStats = async () => {
       try {
         const token = localStorage.getItem("token");
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
         const res = await fetch(`${apiUrl}/api/pinterest/stats`, {
           headers: {
             "Authorization": `Bearer ${token}`,

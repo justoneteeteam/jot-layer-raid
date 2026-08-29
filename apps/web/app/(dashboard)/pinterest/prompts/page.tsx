@@ -32,7 +32,7 @@ export default function PromptLibrary() {
     name: "", styleDescription: "", positivePrompt: "", negativePrompt: "", colorPalette: "", lightingStyle: "", cameraStyle: ""
   });
 
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
 
   const fetchPrompts = async () => {
     try {

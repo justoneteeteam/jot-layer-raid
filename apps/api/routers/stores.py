@@ -12,10 +12,11 @@ router = APIRouter(prefix="/api/stores", tags=["Stores"])
 
 class StoreCreate(BaseModel):
     name: str
-    platform: str  # "woocommerce" or "shopbase"
+    platform: str  # "woocommerce", "shopbase", "astro"
     url: str
     api_key: str
     api_secret: str
+    webhook_url: Optional[str] = None
 
 
 class StoreUpdate(BaseModel):
@@ -23,6 +24,7 @@ class StoreUpdate(BaseModel):
     url: Optional[str] = None
     api_key: Optional[str] = None
     api_secret: Optional[str] = None
+    webhook_url: Optional[str] = None
 
 
 class StoreTest(BaseModel):
@@ -55,6 +57,7 @@ def list_stores(db: Session = Depends(get_db)):
             "name": s.name,
             "platform": s.platform,
             "url": s.url,
+            "webhook_url": s.webhook_url or ("https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro" if s.platform.lower() == "astro" else None),
             "is_active": s.is_active,
             "apiKey": f"{s.api_key[:3]}••••••" if s.api_key else "••••••",
             "apiSecret": "••••••" if s.api_secret else "••••••",
@@ -68,17 +71,22 @@ def list_stores(db: Session = Depends(get_db)):
 @router.post("")
 def create_store(data: StoreCreate, db: Session = Depends(get_db)):
     """Add a new store connection."""
+    webhook_url = data.webhook_url
+    if not webhook_url and data.platform.lower() == "astro":
+        webhook_url = "https://api-worker.justoneteeteam.workers.dev/api/oms/webhook/astro"
+
     store = Store(
         name=data.name,
         platform=data.platform.lower(),
         url=data.url.rstrip("/"),
         api_key=data.api_key,
         api_secret=data.api_secret,
+        webhook_url=webhook_url,
     )
     db.add(store)
     db.commit()
     db.refresh(store)
-    return {"id": store.id, "name": store.name, "platform": store.platform}
+    return {"id": store.id, "name": store.name, "platform": store.platform, "webhook_url": store.webhook_url}
 
 
 @router.put("/{store_id}")
@@ -95,6 +103,8 @@ def update_store(store_id: int, data: StoreUpdate, db: Session = Depends(get_db)
         store.api_key = data.api_key
     if data.api_secret is not None:
         store.api_secret = data.api_secret
+    if data.webhook_url is not None:
+        store.webhook_url = data.webhook_url
     db.commit()
     return {"updated": store_id}
 

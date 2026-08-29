@@ -2,7 +2,7 @@
 
 import { useState, useRef, type DragEvent } from "react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
 
 interface ParsedRow { [key: string]: string; }
 
