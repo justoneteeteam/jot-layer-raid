@@ -154,21 +154,21 @@ export default function PLReportsPage() {
     }
   };
 
-  // Number Formatter: formats negative values in parentheses e.g. ($179.66) and empty values as —
+  // Number Formatter
   const formatCell = (
     val: number,
     hasMonthData: boolean = true,
     opts: { isVnd?: boolean; isMargin?: boolean; isNegativeRed?: boolean } = {}
   ) => {
     if (!hasMonthData && val === 0) {
-      return <span className="text-gray-400 font-normal">—</span>;
+      return <span className="pl-val-empty">—</span>;
     }
 
     if (opts.isMargin) {
-      if (val === 0 && !hasMonthData) return <span className="text-gray-400 font-normal">—</span>;
+      if (val === 0 && !hasMonthData) return <span className="pl-val-empty">—</span>;
       const isNeg = val < 0;
       return (
-        <span className={isNeg ? "text-rose-600 font-semibold" : "text-gray-900 font-semibold"}>
+        <span className={isNeg ? "pl-val-neg" : "pl-val-pos"}>
           {isNeg ? `(${Math.abs(val).toFixed(1)}%)` : `${val.toFixed(1)}%`}
         </span>
       );
@@ -179,7 +179,7 @@ export default function PLReportsPage() {
       const isNeg = vndVal < 0;
       const absVnd = Math.abs(Math.round(vndVal)).toLocaleString();
       return (
-        <span className={isNeg ? "text-rose-600 font-semibold" : "text-gray-900"}>
+        <span className={isNeg ? "pl-val-neg" : "pl-val-pos"}>
           {isNeg ? `(${absVnd} ₫)` : `${absVnd} ₫`}
         </span>
       );
@@ -194,15 +194,15 @@ export default function PLReportsPage() {
     if (currencyMode === "DUAL") {
       const vndVal = Math.abs(Math.round(val * exchangeRate)).toLocaleString();
       return (
-        <span className={isNeg ? "text-rose-600 font-semibold" : "text-gray-900"}>
+        <span className={isNeg ? "pl-val-neg" : "pl-val-pos"}>
           {isNeg ? `($${absUsd})` : `$${absUsd}`}{" "}
-          <span className="text-[10px] text-gray-500 font-normal">({vndVal} ₫)</span>
+          <span style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 400 }}>({vndVal} ₫)</span>
         </span>
       );
     }
 
     return (
-      <span className={isNeg ? "text-rose-600 font-semibold" : "text-gray-900"}>
+      <span className={isNeg ? "pl-val-neg" : "pl-val-pos"}>
         {isNeg ? `($${absUsd})` : `$${absUsd}`}
       </span>
     );
@@ -233,27 +233,27 @@ export default function PLReportsPage() {
   });
 
   return (
-    <div className="p-6 max-w-[1600px] mx-auto space-y-6">
+    <div className="pl-dashboard">
       {/* ── TOP HEADER: Profit & Loss — {year} ───────────────────────────── */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+      <div className="pl-header">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
+          <div className="pl-header-title">
             Profit & Loss — {selectedYear}
-          </h1>
-          <p className="text-xs text-gray-500 mt-0.5">
+          </div>
+          <div className="pl-header-subtitle">
             Management view · USD · 1 USD = {exchangeRate.toLocaleString()} VND
-          </p>
+          </div>
         </div>
 
         {/* Top Right Action & Filter Toolbar */}
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="pl-header-actions">
           {/* Year Dropdown Selector */}
-          <div className="flex items-center gap-2 bg-white border border-gray-300 rounded-xl px-3 py-1.5 shadow-sm">
-            <span className="text-xs font-semibold text-gray-600">Year:</span>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-secondary)" }}>Year:</span>
             <select
               value={selectedYear}
               onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
-              className="text-xs font-bold text-gray-900 bg-transparent cursor-pointer focus:outline-none"
+              className="pl-select"
             >
               {(report?.availableYears || [2024, 2025, 2026, 2027]).map((yr) => (
                 <option key={yr} value={yr}>
@@ -264,28 +264,22 @@ export default function PLReportsPage() {
           </div>
 
           {/* Currency Switcher */}
-          <div className="flex bg-gray-100 p-1 rounded-xl text-xs font-medium border border-gray-200/60">
+          <div className="pl-currency-pill">
             <button
               onClick={() => setCurrencyMode("USD")}
-              className={`px-2.5 py-1 rounded-lg transition-all ${
-                currencyMode === "USD" ? "bg-white text-gray-900 font-bold shadow-sm" : "text-gray-600"
-              }`}
+              className={`pl-currency-btn ${currencyMode === "USD" ? "active" : ""}`}
             >
               USD
             </button>
             <button
               onClick={() => setCurrencyMode("VND")}
-              className={`px-2.5 py-1 rounded-lg transition-all ${
-                currencyMode === "VND" ? "bg-white text-gray-900 font-bold shadow-sm" : "text-gray-600"
-              }`}
+              className={`pl-currency-btn ${currencyMode === "VND" ? "active" : ""}`}
             >
               VND
             </button>
             <button
               onClick={() => setCurrencyMode("DUAL")}
-              className={`px-2.5 py-1 rounded-lg transition-all ${
-                currencyMode === "DUAL" ? "bg-white text-gray-900 font-bold shadow-sm" : "text-gray-600"
-              }`}
+              className={`pl-currency-btn ${currencyMode === "DUAL" ? "active" : ""}`}
             >
               Both
             </button>
@@ -295,7 +289,7 @@ export default function PLReportsPage() {
           <button
             onClick={handleSyncOrders}
             disabled={syncingOrders}
-            className="px-3 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors disabled:opacity-50"
+            className="btn btn-secondary"
             title="Sync latest live orders from WooCommerce, ShopBase, and Astro"
           >
             <span>{syncingOrders ? "🔄" : "⚡"}</span>
@@ -306,7 +300,8 @@ export default function PLReportsPage() {
           {report && (
             <button
               onClick={() => exportPLToExcel(report)}
-              className="px-3 py-2 bg-white hover:bg-gray-50 text-emerald-700 border border-emerald-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
+              className="btn btn-secondary"
+              style={{ color: "#10B981" }}
             >
               <span>📥</span>
               <span>Export Excel</span>
@@ -319,83 +314,78 @@ export default function PLReportsPage() {
               setEditingTransaction(null);
               setIsModalOpen(true);
             }}
-            className="px-4 py-2 bg-teal-600 hover:bg-teal-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-md hover:shadow-lg transition-all"
+            className="btn btn-primary"
           >
-            <span className="text-base leading-none">+</span>
+            <span style={{ fontSize: "16px", lineHeight: 1 }}>+</span>
             <span>Add / Import Transaction</span>
           </button>
         </div>
       </div>
 
       {errorMsg && (
-        <div className="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center justify-between">
+        <div style={{ padding: "12px 16px", background: "#FEE2E2", color: "var(--error)", borderRadius: "10px", fontSize: "13px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span>⚠️ {errorMsg}</span>
-          <button onClick={() => fetchReportData()} className="underline font-bold">
+          <button onClick={() => fetchReportData()} style={{ fontWeight: 700, textDecoration: "underline", background: "none", border: "none", cursor: "pointer" }}>
             Retry
           </button>
         </div>
       )}
 
       {loading && !report ? (
-        <div className="p-16 flex flex-col items-center justify-center text-gray-400 space-y-3 bg-white rounded-2xl border border-gray-200">
-          <div className="w-8 h-8 border-3 border-gray-200 border-t-teal-600 rounded-full animate-spin"></div>
-          <p className="text-xs font-medium">Calculating financial metrics & syncing live orders...</p>
+        <div className="card" style={{ textAlign: "center", padding: "60px 20px" }}>
+          <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>Calculating financial metrics & syncing live orders...</p>
         </div>
       ) : report ? (
         <>
           {/* ── 1. TOP SECTION: 5 KPI SUMMARY CARDS ─────────────────────── */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          <div className="pl-kpi-grid">
             {/* 1. Gross Revenue */}
-            <div className="bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm flex flex-col justify-between">
-              <span className="text-xs font-semibold text-gray-500">Gross Revenue</span>
-              <div className="text-2xl font-black text-gray-900 mt-2 tracking-tight">
+            <div className="pl-kpi-card">
+              <span className="pl-kpi-label">Gross Revenue</span>
+              <div className="pl-kpi-value">
                 ${report.totals.crossRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
-              <span className="text-[11px] text-gray-400 mt-1">Total orders & sales</span>
+              <span className="pl-kpi-sub">Total orders & sales</span>
             </div>
 
             {/* 2. Total Expenses */}
-            <div className="bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm flex flex-col justify-between">
-              <span className="text-xs font-semibold text-gray-500">Total Expenses</span>
-              <div className="text-2xl font-black text-gray-900 mt-2 tracking-tight">
+            <div className="pl-kpi-card">
+              <span className="pl-kpi-label">Total Expenses</span>
+              <div className="pl-kpi-value">
                 ${report.totals.totalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
-              <span className="text-[11px] text-gray-400 mt-1">
-                {report.spendDistribution.length} active spend categories
+              <span className="pl-kpi-sub">
+                {report.spendDistribution.length} active categories
               </span>
             </div>
 
             {/* 3. Net Profit */}
-            <div className="bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm flex flex-col justify-between">
-              <span className="text-xs font-semibold text-gray-500">Net Profit</span>
-              <div
-                className={`text-2xl font-black mt-2 tracking-tight ${
-                  report.totals.netProfitUsd >= 0 ? "text-gray-900" : "text-rose-600"
-                }`}
-              >
+            <div className="pl-kpi-card">
+              <span className="pl-kpi-label">Net Profit</span>
+              <div className="pl-kpi-value" style={{ color: report.totals.netProfitUsd >= 0 ? "var(--text-primary)" : "var(--error)" }}>
                 ${report.totals.netProfitUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
-              <span className="text-[11px] text-emerald-600 font-semibold mt-1">
+              <span className="pl-kpi-sub highlight">
                 {formatVndShort(report.totals.netProfitVnd)}
               </span>
             </div>
 
             {/* 4. Net Margin */}
-            <div className="bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm flex flex-col justify-between">
-              <span className="text-xs font-semibold text-gray-500">Net Margin</span>
-              <div className="text-2xl font-black text-gray-900 mt-2 tracking-tight">
+            <div className="pl-kpi-card">
+              <span className="pl-kpi-label">Net Margin</span>
+              <div className="pl-kpi-value">
                 {report.totals.netProfitMargin.toFixed(1)}%
               </div>
-              <span className="text-[11px] text-gray-400 mt-1">Profit to revenue ratio</span>
+              <span className="pl-kpi-sub">Profit to revenue ratio</span>
             </div>
 
             {/* 5. Unsettled Debt */}
-            <div className="bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm flex flex-col justify-between">
-              <span className="text-xs font-semibold text-gray-500">Unsettled Debt</span>
-              <div className="text-2xl font-black text-gray-900 mt-2 tracking-tight">
+            <div className="pl-kpi-card">
+              <span className="pl-kpi-label">Unsettled Debt</span>
+              <div className="pl-kpi-value">
                 ${(debtSummary?.totalUnpaidUsd || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
-              <span className="text-[11px] text-gray-400 mt-1">
+              <span className="pl-kpi-sub">
                 {debtSummary?.debts.filter((d) => d.debtStatus === "unpaid").length || 0} pending payables
               </span>
             </div>
@@ -417,149 +407,121 @@ export default function PLReportsPage() {
           />
 
           {/* ── 3. BOTTOM SECTION: P&L SPREADSHEET MATRIX ────────────────── */}
-          <div className="bg-white border border-gray-200/90 rounded-2xl shadow-sm overflow-hidden">
+          <div className="pl-table-card">
             {/* Spreadsheet Card Header */}
-            <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gray-50/60">
+            <div className="pl-table-header">
               <div>
-                <h3 className="font-bold text-gray-900 text-base">P&L Spreadsheet</h3>
-                <p className="text-xs text-gray-500 mt-0.5">Google Sheets-style monthly financial matrix</p>
+                <div className="pl-card-title">P&L Spreadsheet</div>
+                <div className="pl-card-subtitle">Google Sheets-style monthly financial matrix</div>
               </div>
 
               {/* Sub-view switcher for drilldowns */}
-              <div className="flex items-center gap-2">
-                <div className="flex bg-gray-200/70 p-1 rounded-xl text-xs font-semibold">
-                  <button
-                    onClick={() => setActiveTab("overview")}
-                    className={`px-3 py-1 rounded-lg transition-all ${
-                      activeTab === "overview" ? "bg-white text-gray-900 shadow-sm" : "text-gray-600"
-                    }`}
-                  >
-                    P&L Matrix
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("debts")}
-                    className={`px-3 py-1 rounded-lg transition-all flex items-center gap-1 ${
-                      activeTab === "debts" ? "bg-white text-gray-900 shadow-sm" : "text-gray-600"
-                    }`}
-                  >
-                    <span>💳 Debt Tracker</span>
-                    {debtSummary && debtSummary.totalUnpaidUsd > 0 && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                    )}
-                  </button>
-                  <button
-                    onClick={() => setActiveTab("ledger")}
-                    className={`px-3 py-1 rounded-lg transition-all ${
-                      activeTab === "ledger" ? "bg-white text-gray-900 shadow-sm" : "text-gray-600"
-                    }`}
-                  >
-                    📝 Transaction Ledger
-                  </button>
-                </div>
+              <div style={{ display: "flex", gap: "6px" }}>
+                <button
+                  onClick={() => setActiveTab("overview")}
+                  className={`btn btn-secondary ${activeTab === "overview" ? "active" : ""}`}
+                  style={{ fontSize: "12px", padding: "6px 12px", background: activeTab === "overview" ? "var(--bg-tertiary)" : "transparent" }}
+                >
+                  P&L Matrix
+                </button>
+                <button
+                  onClick={() => setActiveTab("debts")}
+                  className={`btn btn-secondary ${activeTab === "debts" ? "active" : ""}`}
+                  style={{ fontSize: "12px", padding: "6px 12px", background: activeTab === "debts" ? "var(--bg-tertiary)" : "transparent" }}
+                >
+                  <span>💳 Debt Tracker</span>
+                  {debtSummary && debtSummary.totalUnpaidUsd > 0 && (
+                    <span style={{ width: "6px", height: "6px", borderRadius: "50%", background: "#F59E0B", display: "inline-block", marginLeft: "4px" }} />
+                  )}
+                </button>
+                <button
+                  onClick={() => setActiveTab("ledger")}
+                  className={`btn btn-secondary ${activeTab === "ledger" ? "active" : ""}`}
+                  style={{ fontSize: "12px", padding: "6px 12px", background: activeTab === "ledger" ? "var(--bg-tertiary)" : "transparent" }}
+                >
+                  📝 Transaction Ledger
+                </button>
               </div>
             </div>
 
             {/* TAB CONTENT 1: Full P&L Spreadsheet Matrix */}
             {activeTab === "overview" && (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left border-collapse min-w-[1000px]">
+              <div style={{ overflowX: "auto" }}>
+                <table className="pl-spreadsheet-table">
                   <thead>
-                    <tr className="bg-gray-100/70 text-gray-600 border-b border-gray-200 font-bold">
-                      <th className="py-3 px-4 sticky left-0 bg-gray-100/95 z-10 w-60 border-r border-gray-200 text-gray-700 uppercase tracking-wider text-[11px]">
-                        Category / Metric
-                      </th>
+                    <tr>
+                      <th>Category / Metric</th>
                       {MONTH_NAMES.map((name) => (
-                        <th key={name} className="py-3 px-3 text-right font-bold border-r border-gray-200 text-gray-700">
-                          {name}
-                        </th>
+                        <th key={name}>{name}</th>
                       ))}
-                      <th className="py-3 px-4 text-right font-black bg-gray-200/90 text-gray-900 w-28">
-                        YTD
-                      </th>
+                      <th className="ytd-col">YTD</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody>
                     {/* ── SECTION 1: REVENUE ──────────────────────────────── */}
-                    <tr className="bg-gray-50/90 font-bold text-gray-900 border-y border-gray-200">
-                      <td colSpan={14} className="py-2 px-4 uppercase tracking-wider text-[11px] text-gray-800">
-                        Revenue
-                      </td>
+                    <tr className="pl-row-section">
+                      <td colSpan={14}>Revenue</td>
                     </tr>
 
                     {/* Revenue Row */}
-                    <tr className="hover:bg-gray-50/50 transition-colors">
-                      <td className="py-2.5 px-4 font-medium text-gray-700 sticky left-0 bg-white border-r border-gray-200">
-                        Revenue
-                      </td>
+                    <tr>
+                      <td>Revenue</td>
                       {report.months.map((m) => (
-                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-gray-200">
+                        <td key={m.month}>
                           {formatCell(m.totalRevenue, m.hasData)}
                         </td>
                       ))}
-                      <td className="py-2.5 px-4 text-right font-bold text-gray-900 bg-gray-50/60">
+                      <td style={{ fontWeight: 700, background: "#F8FAFC" }}>
                         {formatCell(report.totals.totalRevenue, true)}
                       </td>
                     </tr>
 
                     {/* Refund Row */}
-                    <tr className="hover:bg-gray-50/50 transition-colors">
-                      <td className="py-2.5 px-4 font-medium text-gray-700 sticky left-0 bg-white border-r border-gray-200">
-                        Refund
-                      </td>
+                    <tr>
+                      <td>Refund</td>
                       {report.months.map((m) => (
-                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-gray-200">
+                        <td key={m.month}>
                           {m.refund > 0 ? formatCell(-m.refund, true) : formatCell(0, m.hasData)}
                         </td>
                       ))}
-                      <td className="py-2.5 px-4 text-right font-bold text-gray-900 bg-gray-50/60">
+                      <td style={{ fontWeight: 700, background: "#F8FAFC" }}>
                         {report.totals.refund > 0 ? formatCell(-report.totals.refund, true) : formatCell(0, true)}
                       </td>
                     </tr>
 
                     {/* Gross Revenue Row */}
-                    <tr className="bg-emerald-50/50 font-bold border-y border-emerald-100 text-gray-900">
-                      <td className="py-2.5 px-4 sticky left-0 bg-emerald-50/90 border-r border-emerald-100 font-bold">
-                        Gross Revenue
-                      </td>
+                    <tr className="pl-row-gross-rev">
+                      <td>Gross Revenue</td>
                       {report.months.map((m) => (
-                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-emerald-100 font-bold">
+                        <td key={m.month}>
                           {formatCell(m.crossRevenue, m.hasData)}
                         </td>
                       ))}
-                      <td className="py-2.5 px-4 text-right font-black bg-emerald-100/70 text-emerald-950">
+                      <td style={{ fontWeight: 900, background: "#BBF7D0" }}>
                         {formatCell(report.totals.crossRevenue, true)}
                       </td>
                     </tr>
 
                     {/* ── SECTION 2: EXPENSES ─────────────────────────────── */}
-                    <tr className="bg-gray-50/90 font-bold text-gray-900 border-y border-gray-200">
-                      <td colSpan={14} className="py-2 px-4 uppercase tracking-wider text-[11px] text-gray-800">
-                        Expenses
-                      </td>
+                    <tr className="pl-row-section">
+                      <td colSpan={14}>Expenses</td>
                     </tr>
 
                     {/* Expense Categories */}
-                    {report.categoriesList.map((cat, idx) => {
+                    {report.categoriesList.map((cat) => {
                       const totalCat = report.totals.costCategories[cat] || 0;
                       return (
-                        <tr
-                          key={cat}
-                          className={`hover:bg-gray-50/50 transition-colors ${
-                            idx % 2 === 1 ? "bg-gray-50/20" : ""
-                          }`}
-                        >
-                          <td className="py-2.5 px-4 font-medium text-gray-700 sticky left-0 bg-inherit border-r border-gray-200">
-                            {cat}
-                          </td>
+                        <tr key={cat}>
+                          <td>{cat}</td>
                           {report.months.map((m) => {
                             const val = m.costCategories[cat] || 0;
                             return (
-                              <td key={m.month} className="py-2.5 px-3 text-right border-r border-gray-200">
+                              <td key={m.month}>
                                 {formatCell(val, m.hasData && val > 0)}
                               </td>
                             );
                           })}
-                          <td className="py-2.5 px-4 text-right font-bold text-gray-900 bg-gray-50/60">
+                          <td style={{ fontWeight: 700, background: "#F8FAFC" }}>
                             {formatCell(totalCat, totalCat > 0)}
                           </td>
                         </tr>
@@ -567,83 +529,73 @@ export default function PLReportsPage() {
                     })}
 
                     {/* Total Expenses Row */}
-                    <tr className="bg-amber-50/60 font-bold border-y border-amber-200 text-gray-900">
-                      <td className="py-2.5 px-4 uppercase sticky left-0 bg-amber-50/95 border-r border-amber-200 font-bold text-[11px]">
-                        Total Expenses
-                      </td>
+                    <tr className="pl-row-total-cost">
+                      <td>Total Expenses</td>
                       {report.months.map((m) => (
-                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-amber-200 font-bold">
+                        <td key={m.month}>
                           {formatCell(m.totalCost, m.hasData)}
                         </td>
                       ))}
-                      <td className="py-2.5 px-4 text-right font-black bg-amber-100/70 text-amber-950">
+                      <td style={{ fontWeight: 900, background: "#FDE68A" }}>
                         {formatCell(report.totals.totalCost, true)}
                       </td>
                     </tr>
 
                     {/* ── SECTION 3: PROFITABILITY ─────────────────────────── */}
-                    <tr className="bg-gray-50/90 font-bold text-gray-900 border-y border-gray-200">
-                      <td colSpan={14} className="py-2 px-4 uppercase tracking-wider text-[11px] text-gray-800">
-                        Profitability
-                      </td>
+                    <tr className="pl-row-section">
+                      <td colSpan={14}>Profitability</td>
                     </tr>
 
                     {/* Net Profit ($ USD) */}
-                    <tr className="bg-white font-bold hover:bg-gray-50/50">
-                      <td className="py-2.5 px-4 sticky left-0 bg-white border-r border-gray-200 text-gray-900 font-bold">
-                        Net Profit ($)
-                      </td>
+                    <tr className="pl-row-net-profit">
+                      <td style={{ fontWeight: 700 }}>Net Profit ($)</td>
                       {report.months.map((m) => (
-                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-gray-200 font-bold">
+                        <td key={m.month} style={{ fontWeight: 700 }}>
                           {formatCell(m.netProfitUsd, m.hasData, { isNegativeRed: true })}
                         </td>
                       ))}
-                      <td className="py-2.5 px-4 text-right font-black bg-gray-100 text-gray-900">
+                      <td style={{ fontWeight: 900, background: "#F1F5F9" }}>
                         {formatCell(report.totals.netProfitUsd, true, { isNegativeRed: true })}
                       </td>
                     </tr>
 
                     {/* Net Profit (VND) */}
-                    <tr className="bg-white hover:bg-gray-50/50">
-                      <td className="py-2.5 px-4 sticky left-0 bg-white border-r border-gray-200 text-gray-700 font-medium">
-                        Net Profit (VND)
-                      </td>
+                    <tr>
+                      <td>Net Profit (VND)</td>
                       {report.months.map((m) => (
-                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-gray-200 font-semibold">
+                        <td key={m.month}>
                           {formatCell(m.netProfitVnd, m.hasData, { isVnd: true, isNegativeRed: true })}
                         </td>
                       ))}
-                      <td className="py-2.5 px-4 text-right font-bold bg-gray-100 text-gray-900">
+                      <td style={{ fontWeight: 700, background: "#F8FAFC" }}>
                         {formatCell(report.totals.netProfitVnd, true, { isVnd: true, isNegativeRed: true })}
                       </td>
                     </tr>
 
                     {/* Net Margin % */}
-                    <tr className="bg-white hover:bg-gray-50/50">
-                      <td className="py-2 px-4 sticky left-0 bg-white border-r border-gray-200 text-gray-700 font-medium">
-                        Net Margin %
-                      </td>
+                    <tr>
+                      <td>Net Margin %</td>
                       {report.months.map((m) => (
-                        <td key={m.month} className="py-2 px-3 text-right border-r border-gray-200">
+                        <td key={m.month}>
                           {formatCell(m.netProfitMargin, m.hasData, { isMargin: true })}
                         </td>
                       ))}
-                      <td className="py-2 px-4 text-right font-bold bg-gray-100 text-gray-900">
+                      <td style={{ fontWeight: 700, background: "#F8FAFC" }}>
                         {formatCell(report.totals.netProfitMargin, true, { isMargin: true })}
                       </td>
                     </tr>
 
                     {/* Accumulate Profit (VND) */}
-                    <tr className="bg-gray-50/60 font-bold border-t border-gray-200">
-                      <td className="py-2.5 px-4 uppercase sticky left-0 bg-gray-50 border-r border-gray-200 text-gray-800 text-[11px]">
+                    <tr style={{ background: "#F8FAFC", fontWeight: 700 }}>
+                      <td style={{ textTransform: "uppercase", fontSize: "11px", color: "var(--text-secondary)" }}>
                         Accumulate Profit (VND)
                       </td>
                       {report.months.map((m) => (
-                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-gray-200">
+                        <td key={m.month}>
                           {formatCell(m.accumulateProfitVnd, m.hasData, { isVnd: true })}
                         </td>
                       ))}
-                      <td className="py-2.5 px-4 text-right font-black bg-gray-200 text-gray-900">
+                      <td style={{ fontWeight: 900, background: "#E2E8F0" }}>
                         {formatCell(report.totals.accumulateProfitVnd, true, { isVnd: true })}
                       </td>
                     </tr>
@@ -654,137 +606,103 @@ export default function PLReportsPage() {
 
             {/* TAB CONTENT 2: Debt Tracker */}
             {activeTab === "debts" && (
-              <div className="p-5 space-y-4">
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pb-3 border-b border-gray-100">
-                  <div className="text-xs text-gray-600">
+              <div style={{ padding: "20px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px", paddingBottom: "12px", borderBottom: "1px solid var(--border-default)" }}>
+                  <div style={{ fontSize: "13px", color: "var(--text-secondary)" }}>
                     Track payables, supplier loans, and credit balances with due dates and settlement receipts.
                   </div>
-                  <div className="flex items-center gap-3 text-xs font-semibold">
-                    <div className="bg-amber-50 border border-amber-200 text-amber-900 px-3 py-1.5 rounded-xl">
+                  <div style={{ display: "flex", gap: "12px", fontSize: "12px", fontWeight: 600 }}>
+                    <div style={{ padding: "6px 12px", background: "#FEF3C7", color: "#78350F", borderRadius: "8px" }}>
                       Unsettled: <strong>${(debtSummary?.totalUnpaidUsd || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
                     </div>
-                    <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 px-3 py-1.5 rounded-xl">
+                    <div style={{ padding: "6px 12px", background: "#DCFCE7", color: "#14532D", borderRadius: "8px" }}>
                       Paid: <strong>${(debtSummary?.totalPaidUsd || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
                     </div>
                   </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead className="bg-gray-50 text-gray-600 border-b border-gray-200">
+                <table className="pl-spreadsheet-table">
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left" }}>Date</th>
+                      <th style={{ textAlign: "left" }}>Counterparty</th>
+                      <th style={{ textAlign: "left" }}>Category</th>
+                      <th>Amount (USD)</th>
+                      <th>Amount (VND)</th>
+                      <th style={{ textAlign: "left" }}>Due Date</th>
+                      <th style={{ textAlign: "left" }}>Status</th>
+                      <th style={{ textAlign: "left" }}>Proof</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(!debtSummary || debtSummary.debts.length === 0) ? (
                       <tr>
-                        <th className="py-2.5 px-4">Date</th>
-                        <th className="py-2.5 px-4">Counterparty</th>
-                        <th className="py-2.5 px-4">Category</th>
-                        <th className="py-2.5 px-4 text-right">Amount (USD)</th>
-                        <th className="py-2.5 px-4 text-right">Amount (VND)</th>
-                        <th className="py-2.5 px-4">Due Date</th>
-                        <th className="py-2.5 px-4">Status</th>
-                        <th className="py-2.5 px-4">Proof</th>
-                        <th className="py-2.5 px-4 text-right">Actions</th>
+                        <td colSpan={9} style={{ textAlign: "center", padding: "30px 0", color: "var(--text-muted)" }}>
+                          No debt records found. Click "+ Add / Import Transaction" to record one.
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {(!debtSummary || debtSummary.debts.length === 0) ? (
-                        <tr>
-                          <td colSpan={9} className="py-8 text-center text-gray-400">
-                            No debt records found. Click "+ Add / Import Transaction" to record one.
+                    ) : (
+                      debtSummary.debts.map((d) => (
+                        <tr key={d.id}>
+                          <td style={{ textAlign: "left" }}>{d.transactionDate?.split("T")[0]}</td>
+                          <td style={{ textAlign: "left", fontWeight: 600 }}>{d.debtCounterparty || "—"}</td>
+                          <td style={{ textAlign: "left" }}>{d.category}</td>
+                          <td style={{ fontWeight: 600 }}>${d.amountUsd?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                          <td>{d.amountVnd?.toLocaleString()} ₫</td>
+                          <td style={{ textAlign: "left" }}>{d.debtDueDate ? d.debtDueDate.split("T")[0] : "—"}</td>
+                          <td style={{ textAlign: "left" }}>
+                            <span className={`badge ${d.debtStatus === "paid" ? "badge-success" : d.debtStatus === "partial" ? "badge-info" : "badge-warning"}`}>
+                              {d.debtStatus}
+                            </span>
                           </td>
-                        </tr>
-                      ) : (
-                        debtSummary.debts.map((d) => (
-                          <tr key={d.id} className="hover:bg-gray-50">
-                            <td className="py-2.5 px-4 font-medium text-gray-700">
-                              {d.transactionDate?.split("T")[0]}
-                            </td>
-                            <td className="py-2.5 px-4 font-semibold text-gray-900">
-                              {d.debtCounterparty || "—"}
-                            </td>
-                            <td className="py-2.5 px-4 text-gray-600">{d.category}</td>
-                            <td className="py-2.5 px-4 text-right font-semibold text-gray-900">
-                              ${d.amountUsd?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="py-2.5 px-4 text-right font-medium text-gray-600">
-                              {d.amountVnd?.toLocaleString()} ₫
-                            </td>
-                            <td className="py-2.5 px-4 text-gray-700">
-                              {d.debtDueDate ? d.debtDueDate.split("T")[0] : "—"}
-                            </td>
-                            <td className="py-2.5 px-4">
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                  d.debtStatus === "paid"
-                                    ? "bg-emerald-100 text-emerald-800"
-                                    : d.debtStatus === "partial"
-                                    ? "bg-blue-100 text-blue-800"
-                                    : "bg-amber-100 text-amber-800"
-                                }`}
-                              >
-                                {d.debtStatus}
-                              </span>
-                            </td>
-                            <td className="py-2.5 px-4">
-                              {d.imageProofUrl ? (
-                                <a
-                                  href={d.imageProofUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-teal-600 hover:underline font-semibold"
-                                >
-                                  📎 View
-                                </a>
-                              ) : (
-                                <span className="text-gray-300">—</span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-4 text-right space-x-2">
-                              <button
-                                onClick={() => handleSettleDebt(d)}
-                                className="text-xs text-teal-600 hover:text-teal-800 font-semibold"
-                              >
-                                {d.debtStatus === "paid" ? "Mark Unpaid" : "Mark Paid"}
+                          <td style={{ textAlign: "left" }}>
+                            {d.imageProofUrl ? (
+                              <a href={d.imageProofUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent)", fontWeight: 600, textDecoration: "underline" }}>
+                                📎 View
+                              </a>
+                            ) : (
+                              <span style={{ color: "var(--text-muted)" }}>—</span>
+                            )}
+                          </td>
+                          <td>
+                            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+                              <button onClick={() => handleSettleDebt(d)} className="btn btn-ghost" style={{ fontSize: "11px", padding: "4px 8px" }}>
+                                {d.debtStatus === "paid" ? "Unsettle" : "Settle"}
                               </button>
-                              <button
-                                onClick={() => {
-                                  setEditingTransaction(d);
-                                  setIsModalOpen(true);
-                                }}
-                                className="text-gray-500 hover:text-gray-800 font-medium"
-                              >
+                              <button onClick={() => { setEditingTransaction(d); setIsModalOpen(true); }} className="btn btn-ghost" style={{ fontSize: "11px", padding: "4px 8px" }}>
                                 Edit
                               </button>
-                              <button
-                                onClick={() => handleDeleteTransaction(d.id)}
-                                className="text-rose-500 hover:text-rose-700 font-medium"
-                              >
+                              <button onClick={() => handleDeleteTransaction(d.id)} className="btn btn-ghost" style={{ fontSize: "11px", padding: "4px 8px", color: "var(--error)" }}>
                                 Delete
                               </button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             )}
 
             {/* TAB CONTENT 3: Transaction Ledger */}
             {activeTab === "ledger" && (
-              <div className="p-5 space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex flex-wrap items-center gap-3">
+              <div style={{ padding: "20px" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: "12px", marginBottom: "16px" }}>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "10px" }}>
                     <input
                       type="text"
                       placeholder="Search notes, events, category..."
                       value={txSearch}
                       onChange={(e) => setTxSearch(e.target.value)}
-                      className="px-3 py-1.5 bg-gray-50 border border-gray-300 rounded-xl text-xs w-64 focus:ring-1 focus:ring-teal-500"
+                      className="input"
+                      style={{ width: "240px", height: "36px" }}
                     />
                     <select
                       value={txTypeFilter}
                       onChange={(e) => setTxTypeFilter(e.target.value)}
-                      className="px-3 py-1.5 bg-gray-50 border border-gray-300 rounded-xl text-xs text-gray-700 font-medium cursor-pointer"
+                      className="pl-select"
                     >
                       <option value="all">All Types</option>
                       <option value="cost">Cost (Expense)</option>
@@ -794,7 +712,7 @@ export default function PLReportsPage() {
                     <select
                       value={txCategoryFilter}
                       onChange={(e) => setTxCategoryFilter(e.target.value)}
-                      className="px-3 py-1.5 bg-gray-50 border border-gray-300 rounded-xl text-xs text-gray-700 font-medium cursor-pointer"
+                      className="pl-select"
                     >
                       <option value="all">All Categories</option>
                       {report.categoriesList.map((cat) => (
@@ -804,123 +722,85 @@ export default function PLReportsPage() {
                       ))}
                     </select>
                   </div>
-                  <div className="text-xs text-gray-500">
+                  <div style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
                     Showing <strong>{filteredTransactions.length}</strong> transactions
                   </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead className="bg-gray-50 text-gray-600 border-b border-gray-200">
+                <table className="pl-spreadsheet-table">
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left" }}>Date</th>
+                      <th style={{ textAlign: "left" }}>Type</th>
+                      <th style={{ textAlign: "left" }}>Category</th>
+                      <th>Amount (USD)</th>
+                      <th>Amount (VND)</th>
+                      <th style={{ textAlign: "left" }}>Note / Event</th>
+                      <th style={{ textAlign: "left" }}>Flags</th>
+                      <th style={{ textAlign: "left" }}>Proof</th>
+                      <th>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredTransactions.length === 0 ? (
                       <tr>
-                        <th className="py-2.5 px-4">Date</th>
-                        <th className="py-2.5 px-4">Type</th>
-                        <th className="py-2.5 px-4">Category</th>
-                        <th className="py-2.5 px-4 text-right">Amount (USD)</th>
-                        <th className="py-2.5 px-4 text-right">Amount (VND)</th>
-                        <th className="py-2.5 px-4">Note / Event</th>
-                        <th className="py-2.5 px-4">Flags</th>
-                        <th className="py-2.5 px-4">Proof</th>
-                        <th className="py-2.5 px-4 text-right">Actions</th>
+                        <td colSpan={9} style={{ textAlign: "center", padding: "30px 0", color: "var(--text-muted)" }}>
+                          No transactions found matching the filter criteria.
+                        </td>
                       </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100">
-                      {filteredTransactions.length === 0 ? (
-                        <tr>
-                          <td colSpan={9} className="py-8 text-center text-gray-400">
-                            No transactions found matching the filter criteria.
+                    ) : (
+                      filteredTransactions.map((tx) => (
+                        <tr key={tx.id}>
+                          <td style={{ textAlign: "left" }}>{tx.transactionDate?.split("T")[0]}</td>
+                          <td style={{ textAlign: "left" }}>
+                            <span className={`badge ${tx.type === "cost" ? "badge-error" : tx.type === "revenue" ? "badge-success" : "badge-warning"}`}>
+                              {tx.type}
+                            </span>
                           </td>
-                        </tr>
-                      ) : (
-                        filteredTransactions.map((tx) => (
-                          <tr key={tx.id} className="hover:bg-gray-50">
-                            <td className="py-2.5 px-4 font-medium text-gray-700">
-                              {tx.transactionDate?.split("T")[0]}
-                            </td>
-                            <td className="py-2.5 px-4">
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                  tx.type === "cost"
-                                    ? "bg-rose-100 text-rose-800"
-                                    : tx.type === "revenue"
-                                    ? "bg-emerald-100 text-emerald-800"
-                                    : "bg-amber-100 text-amber-800"
-                                }`}
-                              >
-                                {tx.type}
+                          <td style={{ textAlign: "left", fontWeight: 600 }}>{tx.category}</td>
+                          <td style={{ fontWeight: 600 }}>${tx.amountUsd?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                          <td>{tx.amountVnd?.toLocaleString()} ₫</td>
+                          <td style={{ textAlign: "left", maxWidth: "200px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                            {tx.note || tx.event ? (
+                              <div>
+                                {tx.note && <span>{tx.note} </span>}
+                                {tx.event && <span className="badge" style={{ background: "var(--bg-tertiary)", fontSize: "10px" }}>🏷️ {tx.event}</span>}
+                              </div>
+                            ) : "—"}
+                          </td>
+                          <td style={{ textAlign: "left" }}>
+                            {tx.isExcludedFromReport ? (
+                              <span className="badge" style={{ background: "var(--bg-tertiary)", color: "var(--text-muted)", fontSize: "10px" }}>
+                                Excluded from Report
                               </span>
-                            </td>
-                            <td className="py-2.5 px-4 font-semibold text-gray-900">{tx.category}</td>
-                            <td className="py-2.5 px-4 text-right font-bold text-gray-900">
-                              ${tx.amountUsd?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                            </td>
-                            <td className="py-2.5 px-4 text-right font-medium text-gray-600">
-                              {tx.amountVnd?.toLocaleString()} ₫
-                            </td>
-                            <td className="py-2.5 px-4 text-gray-700 max-w-[200px] truncate">
-                              {tx.note || tx.event ? (
-                                <div className="space-y-0.5">
-                                  {tx.note && <div className="truncate">{tx.note}</div>}
-                                  {tx.event && (
-                                    <span className="text-[10px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded font-medium">
-                                      🏷️ {tx.event}
-                                    </span>
-                                  )}
-                                </div>
-                              ) : (
-                                "—"
-                              )}
-                            </td>
-                            <td className="py-2.5 px-4">
-                              {tx.isExcludedFromReport ? (
-                                <span className="text-[10px] bg-gray-200 text-gray-700 px-2 py-0.5 rounded font-medium">
-                                  Excluded from Report
-                                </span>
-                              ) : tx.isRecurring ? (
-                                <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-medium">
-                                  🔄 {tx.repeatFrequency}
-                                </span>
-                              ) : (
-                                <span className="text-gray-300">—</span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-4">
-                              {tx.imageProofUrl ? (
-                                <a
-                                  href={tx.imageProofUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="text-teal-600 hover:underline font-semibold"
-                                >
-                                  📎 View
-                                </a>
-                              ) : (
-                                <span className="text-gray-300">—</span>
-                              )}
-                            </td>
-                            <td className="py-2.5 px-4 text-right space-x-2">
-                              <button
-                                onClick={() => {
-                                  setEditingTransaction(tx);
-                                  setIsModalOpen(true);
-                                }}
-                                className="text-xs text-gray-600 hover:text-gray-900 font-medium"
-                              >
+                            ) : tx.isRecurring ? (
+                              <span className="badge badge-info" style={{ fontSize: "10px" }}>
+                                🔄 {tx.repeatFrequency}
+                              </span>
+                            ) : "—"}
+                          </td>
+                          <td style={{ textAlign: "left" }}>
+                            {tx.imageProofUrl ? (
+                              <a href={tx.imageProofUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent)", fontWeight: 600, textDecoration: "underline" }}>
+                                📎 View
+                              </a>
+                            ) : "—"}
+                          </td>
+                          <td>
+                            <div style={{ display: "flex", justifyContent: "flex-end", gap: "8px" }}>
+                              <button onClick={() => { setEditingTransaction(tx); setIsModalOpen(true); }} className="btn btn-ghost" style={{ fontSize: "11px", padding: "4px 8px" }}>
                                 Edit
                               </button>
-                              <button
-                                onClick={() => handleDeleteTransaction(tx.id)}
-                                className="text-xs text-rose-500 hover:text-rose-700 font-medium"
-                              >
+                              <button onClick={() => handleDeleteTransaction(tx.id)} className="btn btn-ghost" style={{ fontSize: "11px", padding: "4px 8px", color: "var(--error)" }}>
                                 Delete
                               </button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                            </div>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
             )}
           </div>

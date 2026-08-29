@@ -70,7 +70,7 @@ export function FinancialCharts({
 
   // Max value for revenue bar chart scaling
   const maxRevenue = Math.max(...monthlyTrends.map((d) => d.grossRevenue), 100);
-  const chartHeight = 160;
+  const chartHeight = 150;
 
   // Compute expense vs profit progress percentages
   const totalInflow = Math.max(totalRevenue, totalExpenses + Math.max(0, netProfit), 1);
@@ -78,21 +78,21 @@ export function FinancialCharts({
   const profitPct = Math.min(100, Math.max(0, (Math.max(0, netProfit) / totalInflow) * 100));
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
+    <div className="pl-visual-grid">
       {/* 1. Left Card: Monthly Revenue (Jan–Dec {year}) */}
-      <div className="lg:col-span-7 bg-white border border-gray-200/90 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
-        <div className="flex items-center justify-between mb-4">
+      <div className="pl-card">
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
           <div>
-            <h3 className="font-bold text-gray-900 text-base">Monthly Revenue</h3>
-            <p className="text-xs text-gray-500 mt-0.5">Jan–Dec {year}</p>
+            <div className="pl-card-title">Monthly Revenue</div>
+            <div className="pl-card-subtitle">Jan–Dec {year}</div>
           </div>
-          <div className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100">
+          <span className="badge badge-success" style={{ fontSize: "12px", fontWeight: 600 }}>
             Total: {formatAmount(totalRevenue)}
-          </div>
+          </span>
         </div>
 
-        {/* Clean Vertical Green Bars with exact numbers on top */}
-        <div className="pt-6 pb-2 flex items-end justify-between gap-1 sm:gap-2 h-[200px] border-b border-gray-100">
+        {/* Clean Vertical Emerald Bars with exact numbers on top */}
+        <div className="pl-bar-container">
           {monthlyTrends.map((d, index) => {
             const hasData = d.grossRevenue > 0 || d.totalCost > 0;
             const barHeightPct = hasData && d.grossRevenue > 0 ? (d.grossRevenue / maxRevenue) * 100 : 0;
@@ -106,51 +106,49 @@ export function FinancialCharts({
                 onClick={() => onSelectMonth(selectedMonthFilter === d.month ? 0 : d.month)}
                 onMouseEnter={() => setHoveredMonth(d)}
                 onMouseLeave={() => setHoveredMonth(null)}
-                className="flex-1 flex flex-col items-center justify-end h-full group cursor-pointer relative"
+                className={`pl-bar-col ${isSelected ? "selected" : ""}`}
               >
                 {/* Value on Top of Bar */}
-                <span
-                  className={`text-[10px] font-semibold mb-1.5 transition-colors whitespace-nowrap ${
-                    isSelected
-                      ? "text-emerald-700 font-bold"
-                      : d.grossRevenue > 0
-                      ? "text-gray-600 group-hover:text-emerald-600"
-                      : "text-gray-400"
-                  }`}
-                >
+                <span className="pl-bar-value">
                   {d.grossRevenue > 0 ? formatShortUsd(d.grossRevenue) : hasData ? "$0" : "—"}
                 </span>
 
                 {/* Vertical Bar */}
                 <div
-                  className="w-full max-w-[28px] rounded-t-md transition-all duration-200"
+                  className="pl-bar-stick"
                   style={{
                     height: `${barHeightPx}px`,
-                    backgroundColor: isSelected ? "#059669" : d.grossRevenue > 0 ? "#10B981" : "#E5E7EB",
-                    minHeight: d.grossRevenue > 0 ? "6px" : "2px"
+                    background: isSelected ? "var(--accent-hover)" : d.grossRevenue > 0 ? "#10B981" : "var(--border-default)"
                   }}
                 />
 
                 {/* Month Name */}
-                <span
-                  className={`text-xs mt-2 transition-colors ${
-                    isSelected
-                      ? "text-emerald-800 font-bold"
-                      : "text-gray-600 group-hover:text-gray-900 font-medium"
-                  }`}
-                >
-                  {monthLabel}
-                </span>
+                <span className="pl-bar-label">{monthLabel}</span>
 
                 {/* Hover Tooltip Popup */}
                 {hoveredMonth?.month === d.month && (
-                  <div className="absolute bottom-full mb-6 bg-gray-900 text-white rounded-lg px-2.5 py-1.5 text-[11px] shadow-xl pointer-events-none z-20 whitespace-nowrap">
-                    <div className="font-bold text-gray-200 border-b border-gray-700 pb-0.5">
+                  <div
+                    style={{
+                      position: "absolute",
+                      bottom: "100%",
+                      marginBottom: "24px",
+                      background: "var(--text-primary)",
+                      color: "white",
+                      borderRadius: "8px",
+                      padding: "8px 12px",
+                      fontSize: "11px",
+                      boxShadow: "var(--shadow-lg)",
+                      pointerEvents: "none",
+                      zIndex: 30,
+                      whiteSpace: "nowrap"
+                    }}
+                  >
+                    <div style={{ fontWeight: 700, borderBottom: "1px solid rgba(255,255,255,0.2)", paddingBottom: "3px" }}>
                       {monthLabel} {year}
                     </div>
-                    <div className="text-emerald-400 mt-0.5">Rev: {formatAmount(d.grossRevenue)}</div>
-                    <div className="text-rose-400">Cost: {formatAmount(d.totalCost)}</div>
-                    <div className="text-blue-400">Net: {formatAmount(d.netProfit)}</div>
+                    <div style={{ color: "#34D399", marginTop: "3px" }}>Revenue: {formatAmount(d.grossRevenue)}</div>
+                    <div style={{ color: "#F87171" }}>Cost: {formatAmount(d.totalCost)}</div>
+                    <div style={{ color: "#60A5FA" }}>Net: {formatAmount(d.netProfit)}</div>
                   </div>
                 )}
               </div>
@@ -160,72 +158,68 @@ export function FinancialCharts({
       </div>
 
       {/* 2. Right Card: Spend Summary (Annual distribution) */}
-      <div className="lg:col-span-5 bg-white border border-gray-200/90 rounded-2xl p-6 shadow-sm flex flex-col justify-between">
+      <div className="pl-card">
         <div>
-          <div className="flex items-center justify-between mb-4">
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "16px" }}>
             <div>
-              <h3 className="font-bold text-gray-900 text-base">Spend Summary</h3>
-              <p className="text-xs text-gray-500 mt-0.5">Annual distribution</p>
+              <div className="pl-card-title">Spend Summary</div>
+              <div className="pl-card-subtitle">Annual distribution</div>
             </div>
             {spendDistribution.length > 0 && (
-              <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-md">
+              <span className="badge" style={{ background: "var(--bg-tertiary)", color: "var(--text-secondary)", fontSize: "11px" }}>
                 {spendDistribution.length} categories
               </span>
             )}
           </div>
 
           {/* Progress Bar 1: Expenses */}
-          <div className="space-y-1.5 mb-4">
-            <div className="flex items-center justify-between text-xs font-semibold text-gray-700">
+          <div className="pl-progress-group">
+            <div className="pl-progress-header">
               <span>Expenses</span>
-              <span className="text-gray-900 font-bold">{formatAmount(totalExpenses)}</span>
+              <span style={{ color: "var(--text-primary)" }}>{formatAmount(totalExpenses)}</span>
             </div>
-            <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-orange-500 rounded-full transition-all duration-500"
-                style={{ width: `${expensePct}%` }}
-              />
+            <div className="pl-progress-track">
+              <div className="pl-progress-bar-orange" style={{ width: `${expensePct}%` }} />
             </div>
           </div>
 
           {/* Progress Bar 2: Net Profit */}
-          <div className="space-y-1.5 mb-3">
-            <div className="flex items-center justify-between text-xs font-semibold text-gray-700">
+          <div className="pl-progress-group" style={{ marginBottom: "10px" }}>
+            <div className="pl-progress-header">
               <span>Net profit</span>
-              <span className="text-emerald-700 font-bold">{formatAmount(netProfit)}</span>
+              <span style={{ color: "#10B981" }}>{formatAmount(netProfit)}</span>
             </div>
-            <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
-              <div
-                className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                style={{ width: `${profitPct}%` }}
-              />
+            <div className="pl-progress-track">
+              <div className="pl-progress-bar-green" style={{ width: `${profitPct}%` }} />
             </div>
           </div>
 
           {/* Explanatory Callout */}
-          <p className="text-xs text-gray-500 italic mb-4">
-            Profit represents <strong className="text-gray-800 not-italic">{netMargin.toFixed(1)}%</strong> of gross revenue.
+          <p style={{ fontSize: "12px", color: "var(--text-muted)", fontStyle: "italic", marginBottom: "16px" }}>
+            Profit represents <strong style={{ color: "var(--text-primary)", fontStyle: "normal" }}>{netMargin.toFixed(1)}%</strong> of gross revenue.
           </p>
         </div>
 
         {/* Expense Category Breakdown List */}
-        <div className="border-t border-gray-100 pt-3 space-y-2 max-h-[140px] overflow-y-auto pr-1">
+        <div style={{ borderTop: "1px solid var(--border-default)", paddingTop: "12px", maxHeight: "140px", overflowY: "auto" }}>
           {spendDistribution.length === 0 ? (
-            <p className="text-xs text-gray-400 text-center py-2">No expenses recorded yet.</p>
+            <p style={{ fontSize: "12px", color: "var(--text-muted)", textAlign: "center", padding: "8px 0" }}>
+              No expenses recorded yet.
+            </p>
           ) : (
             spendDistribution.map((item, idx) => {
               const color = CATEGORY_COLORS[idx % CATEGORY_COLORS.length] || "#0D9488";
               return (
-                <div key={idx} className="flex items-center justify-between text-xs py-0.5">
-                  <div className="flex items-center gap-2 min-w-0 pr-2">
-                    <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />
-                    <span className="text-gray-700 truncate" title={item.category}>
+                <div key={idx} className="pl-category-row">
+                  <div style={{ display: "flex", alignItems: "center", minWidth: 0, paddingRight: "8px" }}>
+                    <span className="pl-cat-dot" style={{ backgroundColor: color }} />
+                    <span style={{ color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={item.category}>
                       {item.category}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    <span className="text-gray-500 font-medium text-[11px]">{item.percentage}%</span>
-                    <span className="font-semibold text-gray-900">{formatAmount(item.amountUsd)}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: "8px", flexShrink: 0 }}>
+                    <span style={{ color: "var(--text-muted)", fontSize: "11px" }}>{item.percentage}%</span>
+                    <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>{formatAmount(item.amountUsd)}</span>
                   </div>
                 </div>
               );

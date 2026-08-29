@@ -67,7 +67,7 @@ export function TransactionModal({
   const [event, setEvent] = useState<string>("");
   const [imageProofUrl, setImageProofUrl] = useState<string>("");
   const [isUploadingImage, setIsUploadingImage] = useState<boolean>(false);
-  const [isExcludedFromReport, setIsExcludedFromReport] = useState<boolean>(false); // 'not count in the report'
+  const [isExcludedFromReport, setIsExcludedFromReport] = useState<boolean>(false);
 
   // Debt specific fields
   const [debtStatus, setDebtStatus] = useState<"unpaid" | "paid" | "partial">("unpaid");
@@ -78,7 +78,6 @@ export function TransactionModal({
   const [errorMsg, setErrorMsg] = useState<string>("");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Initialize or reset form state
   useEffect(() => {
     if (initialData) {
       setActiveTab(initialData.type);
@@ -131,7 +130,6 @@ export function TransactionModal({
     setErrorMsg("");
   }, [initialData, isOpen, defaultExchangeRate]);
 
-  // Set default category on tab switch if not custom
   useEffect(() => {
     if (!initialData && !isCustomCategory) {
       if (activeTab === "cost") setCategory(DEFAULT_COST_CATEGORIES[0]!);
@@ -140,7 +138,6 @@ export function TransactionModal({
     }
   }, [activeTab, initialData, isCustomCategory]);
 
-  // Currency auto-conversion handlers
   const handleVndChange = (valStr: string) => {
     setAmountVnd(valStr);
     const num = parseFloat(valStr.replace(/,/g, ""));
@@ -176,7 +173,6 @@ export function TransactionModal({
     }
   };
 
-  // Image Upload to R2 Bucket
   const handleProofUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -210,7 +206,6 @@ export function TransactionModal({
     }
   };
 
-  // Save Transaction
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg("");
@@ -288,123 +283,136 @@ export function TransactionModal({
       : DEFAULT_DEBT_CATEGORIES;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden border border-gray-100 animate-in fade-in zoom-in-95 duration-200">
+    <div className="pl-modal-overlay">
+      <div className="pl-modal-box">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-gray-50/70">
-          <div className="flex items-center gap-2.5">
-            <span className="text-xl">
+        <div style={{ padding: "18px 24px", borderBottom: "1px solid var(--border-default)", background: "var(--bg-secondary)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{ fontSize: "20px" }}>
               {activeTab === "cost" ? "💸" : activeTab === "revenue" ? "💰" : "💳"}
             </span>
-            <h2 className="text-lg font-bold text-gray-900">
+            <div style={{ fontFamily: "'Space Grotesk', sans-serif", fontSize: "16px", fontWeight: 700, color: "var(--text-primary)" }}>
               {initialData ? "Edit Transaction" : "Add / Import Transaction"}
-            </h2>
+            </div>
           </div>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-200/60 transition-colors"
+            style={{ background: "transparent", border: "none", color: "var(--text-muted)", fontSize: "18px", cursor: "pointer", padding: "4px" }}
           >
             ✕
           </button>
         </div>
 
         {/* 3 Tabs: Cost / Revenue / Debt */}
-        <div className="grid grid-cols-3 p-1.5 bg-gray-100/80 mx-6 mt-5 rounded-xl text-sm font-semibold">
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "4px", margin: "20px 24px 0", background: "var(--bg-tertiary)", padding: "4px", borderRadius: "10px" }}>
           <button
             type="button"
             onClick={() => setActiveTab("cost")}
-            className={`py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-              activeTab === "cost"
-                ? "bg-white text-rose-600 shadow-sm"
-                : "text-gray-600 hover:text-gray-900"
-            }`}
+            style={{
+              padding: "8px 12px",
+              borderRadius: "8px",
+              border: "none",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "all 150ms ease",
+              background: activeTab === "cost" ? "var(--bg-primary)" : "transparent",
+              color: activeTab === "cost" ? "#EF4444" : "var(--text-secondary)",
+              boxShadow: activeTab === "cost" ? "var(--shadow-sm)" : "none"
+            }}
           >
-            <span>💸</span> Cost (Expense)
+            💸 Cost (Expense)
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("revenue")}
-            className={`py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-              activeTab === "revenue"
-                ? "bg-white text-emerald-600 shadow-sm"
-                : "text-gray-600 hover:text-gray-900"
-            }`}
+            style={{
+              padding: "8px 12px",
+              borderRadius: "8px",
+              border: "none",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "all 150ms ease",
+              background: activeTab === "revenue" ? "var(--bg-primary)" : "transparent",
+              color: activeTab === "revenue" ? "#10B981" : "var(--text-secondary)",
+              boxShadow: activeTab === "revenue" ? "var(--shadow-sm)" : "none"
+            }}
           >
-            <span>💰</span> Revenue / Refund
+            💰 Revenue / Refund
           </button>
           <button
             type="button"
             onClick={() => setActiveTab("debt")}
-            className={`py-2 rounded-lg transition-all flex items-center justify-center gap-1.5 ${
-              activeTab === "debt"
-                ? "bg-white text-amber-600 shadow-sm"
-                : "text-gray-600 hover:text-gray-900"
-            }`}
+            style={{
+              padding: "8px 12px",
+              borderRadius: "8px",
+              border: "none",
+              fontSize: "13px",
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "all 150ms ease",
+              background: activeTab === "debt" ? "var(--bg-primary)" : "transparent",
+              color: activeTab === "debt" ? "#F59E0B" : "var(--text-secondary)",
+              boxShadow: activeTab === "debt" ? "var(--shadow-sm)" : "none"
+            }}
           >
-            <span>💳</span> Debt / Payable
+            💳 Debt / Payable
           </button>
         </div>
 
         {/* Form Body */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[78vh] overflow-y-auto">
+        <form onSubmit={handleSubmit} style={{ padding: "20px 24px 24px", maxHeight: "75vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: "16px" }}>
           {errorMsg && (
-            <div className="p-3 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs font-medium flex items-center gap-2">
-              <span>⚠️</span>
-              <span>{errorMsg}</span>
+            <div style={{ padding: "10px 14px", background: "#FEE2E2", color: "var(--error)", borderRadius: "8px", fontSize: "12px", fontWeight: 500 }}>
+              ⚠️ {errorMsg}
             </div>
           )}
 
           {/* Currency Switch & Dual Amount Input */}
-          <div className="bg-gray-50/90 border border-gray-200/80 rounded-xl p-4 space-y-3">
-            <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-gray-700">Amount & Currency Conversion</span>
-              <div className="flex items-center gap-2">
-                <span className="text-gray-500">Rate: 1 USD =</span>
+          <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--border-default)", borderRadius: "10px", padding: "14px" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: "12px", marginBottom: "10px" }}>
+              <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>Amount & Exchange Conversion</span>
+              <div style={{ display: "flex", alignItems: "center", gap: "6px" }}>
+                <span style={{ color: "var(--text-muted)" }}>1 USD =</span>
                 <input
                   type="number"
                   value={exchangeRate}
                   onChange={(e) => handleRateChange(parseFloat(e.target.value) || 0)}
-                  className="w-20 px-2 py-0.5 text-xs bg-white border border-gray-300 rounded font-semibold text-gray-800 text-right focus:ring-1 focus:ring-teal-500"
+                  style={{ width: "70px", padding: "2px 6px", border: "1px solid var(--border-default)", borderRadius: "4px", fontSize: "12px", fontWeight: 700, textAlign: "right" }}
                 />
-                <span className="text-gray-500 font-medium">VND</span>
+                <span style={{ color: "var(--text-muted)", fontWeight: 600 }}>VND</span>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
               {/* VND Field */}
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-600 flex items-center justify-between">
+              <div>
+                <label style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
                   <span>Amount in VND (₫)</span>
-                  {inputCurrency === "VND" && (
-                    <span className="text-[10px] bg-teal-100 text-teal-700 font-semibold px-1.5 py-0.2 rounded">
-                      Primary
-                    </span>
-                  )}
+                  {inputCurrency === "VND" && <span style={{ color: "var(--accent)", fontWeight: 700 }}>Primary</span>}
                 </label>
-                <div className="relative">
+                <div style={{ position: "relative" }}>
                   <input
                     type="text"
                     placeholder="e.g. 5,000,000"
                     value={amountVnd ? Number(amountVnd.replace(/,/g, "")).toLocaleString() : ""}
                     onFocus={() => setInputCurrency("VND")}
                     onChange={(e) => handleVndChange(e.target.value)}
-                    className="w-full pl-3 pr-8 py-2 bg-white border border-gray-300 rounded-lg text-sm font-semibold text-gray-900 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                    className="input"
+                    style={{ fontWeight: 600, paddingRight: "28px" }}
                   />
-                  <span className="absolute right-3 top-2.5 text-gray-400 text-xs font-medium">₫</span>
+                  <span style={{ position: "absolute", right: "10px", top: "10px", color: "var(--text-muted)", fontSize: "13px" }}>₫</span>
                 </div>
               </div>
 
               {/* USD Field */}
-              <div className="space-y-1">
-                <label className="text-xs font-medium text-gray-600 flex items-center justify-between">
+              <div>
+                <label style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
                   <span>Amount in USD ($)</span>
-                  {inputCurrency === "USD" && (
-                    <span className="text-[10px] bg-teal-100 text-teal-700 font-semibold px-1.5 py-0.2 rounded">
-                      Primary
-                    </span>
-                  )}
+                  {inputCurrency === "USD" && <span style={{ color: "var(--accent)", fontWeight: 700 }}>Primary</span>}
                 </label>
-                <div className="relative">
+                <div style={{ position: "relative" }}>
                   <input
                     type="number"
                     step="0.01"
@@ -412,41 +420,43 @@ export function TransactionModal({
                     value={amountUsd}
                     onFocus={() => setInputCurrency("USD")}
                     onChange={(e) => handleUsdChange(e.target.value)}
-                    className="w-full pl-3 pr-8 py-2 bg-white border border-gray-300 rounded-lg text-sm font-semibold text-gray-900 focus:ring-2 focus:ring-teal-500 focus:border-teal-500"
+                    className="input"
+                    style={{ fontWeight: 600, paddingRight: "28px" }}
                   />
-                  <span className="absolute right-3 top-2.5 text-gray-400 text-xs font-medium">$</span>
+                  <span style={{ position: "absolute", right: "10px", top: "10px", color: "var(--text-muted)", fontSize: "13px" }}>$</span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Category & Repeat */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <label className="text-xs font-medium text-gray-700">Category *</label>
+          {/* Category & Recurrence */}
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)" }}>Category *</label>
                 <button
                   type="button"
                   onClick={() => setIsCustomCategory(!isCustomCategory)}
-                  className="text-[11px] text-teal-600 hover:text-teal-700 font-semibold"
+                  style={{ background: "none", border: "none", color: "var(--accent)", fontSize: "11px", fontWeight: 600, cursor: "pointer" }}
                 >
-                  {isCustomCategory ? "Select Existing" : "+ New Category"}
+                  {isCustomCategory ? "Select Existing" : "+ New"}
                 </button>
               </div>
 
               {isCustomCategory ? (
                 <input
                   type="text"
-                  placeholder="Enter custom category name..."
+                  placeholder="Custom category name..."
                   value={customCategoryName}
                   onChange={(e) => setCustomCategoryName(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs font-medium text-gray-900 focus:ring-2 focus:ring-teal-500"
+                  className="input"
                 />
               ) : (
                 <select
                   value={category}
                   onChange={(e) => setCategory(e.target.value)}
-                  className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs font-medium text-gray-900 focus:ring-2 focus:ring-teal-500 cursor-pointer"
+                  className="input"
+                  style={{ cursor: "pointer" }}
                 >
                   {currentCategoryList.map((cat) => (
                     <option key={cat} value={cat}>
@@ -457,13 +467,13 @@ export function TransactionModal({
               )}
             </div>
 
-            {/* Repeat Option */}
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-gray-700">Repeat / Recurrence</label>
+            <div>
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)", display: "block", marginBottom: "4px" }}>Repeat / Recurrence</label>
               <select
                 value={repeatFrequency}
                 onChange={(e) => setRepeatFrequency(e.target.value as any)}
-                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs font-medium text-gray-900 focus:ring-2 focus:ring-teal-500 cursor-pointer"
+                className="input"
+                style={{ cursor: "pointer" }}
               >
                 <option value="none">None (One-time)</option>
                 <option value="monthly">Monthly (Repeats every month)</option>
@@ -474,61 +484,63 @@ export function TransactionModal({
           </div>
 
           {/* Date & Note */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-gray-700">Date</label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+            <div>
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)", display: "block", marginBottom: "4px" }}>Date</label>
               <input
                 type="date"
                 value={transactionDate}
                 onChange={(e) => setTransactionDate(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs font-medium text-gray-900 focus:ring-2 focus:ring-teal-500"
+                className="input"
               />
             </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-gray-700">Note / Description</label>
+            <div>
+              <label style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)", display: "block", marginBottom: "4px" }}>Note / Description</label>
               <input
                 type="text"
-                placeholder="e.g. Monthly Vultr server bill, FB ads topup..."
+                placeholder="e.g. Vultr VPS, Facebook Ads..."
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 focus:ring-2 focus:ring-teal-500"
+                className="input"
               />
             </div>
           </div>
 
           {/* Debt specific options */}
           {activeTab === "debt" && (
-            <div className="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3.5 space-y-3">
-              <span className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
-                <span>📋</span> Debt Tracking Information
-              </span>
-              <div className="grid grid-cols-3 gap-2 text-xs">
+            <div style={{ background: "#FEF3C7", border: "1px solid #FDE68A", borderRadius: "10px", padding: "12px" }}>
+              <div style={{ fontSize: "12px", fontWeight: 700, color: "#78350F", marginBottom: "8px" }}>
+                📋 Debt Tracking Information
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "8px" }}>
                 <div>
-                  <label className="text-[11px] font-medium text-gray-600 block mb-1">Counterparty</label>
+                  <label style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block", marginBottom: "3px" }}>Counterparty</label>
                   <input
                     type="text"
-                    placeholder="e.g. Supplier A / Bank"
+                    placeholder="Supplier / Bank"
                     value={debtCounterparty}
                     onChange={(e) => setDebtCounterparty(e.target.value)}
-                    className="w-full px-2.5 py-1.5 bg-white border border-gray-300 rounded text-xs text-gray-900"
+                    className="input"
+                    style={{ height: "32px", fontSize: "12px" }}
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] font-medium text-gray-600 block mb-1">Due Date</label>
+                  <label style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block", marginBottom: "3px" }}>Due Date</label>
                   <input
                     type="date"
                     value={debtDueDate}
                     onChange={(e) => setDebtDueDate(e.target.value)}
-                    className="w-full px-2.5 py-1.5 bg-white border border-gray-300 rounded text-xs text-gray-900"
+                    className="input"
+                    style={{ height: "32px", fontSize: "12px" }}
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] font-medium text-gray-600 block mb-1">Status</label>
+                  <label style={{ fontSize: "11px", color: "var(--text-secondary)", display: "block", marginBottom: "3px" }}>Status</label>
                   <select
                     value={debtStatus}
                     onChange={(e) => setDebtStatus(e.target.value as any)}
-                    className="w-full px-2.5 py-1.5 bg-white border border-gray-300 rounded text-xs text-gray-900 font-semibold"
+                    className="input"
+                    style={{ height: "32px", fontSize: "12px", fontWeight: 600 }}
                   >
                     <option value="unpaid">Unpaid</option>
                     <option value="partial">Partial</option>
@@ -540,66 +552,70 @@ export function TransactionModal({
           )}
 
           {/* Expandable: Add More Detail */}
-          <div className="border border-gray-200 rounded-xl overflow-hidden">
+          <div style={{ border: "1px solid var(--border-default)", borderRadius: "10px", overflow: "hidden" }}>
             <button
               type="button"
               onClick={() => setShowMoreDetails(!showMoreDetails)}
-              className="w-full px-4 py-2.5 bg-gray-50 flex items-center justify-between text-xs font-semibold text-gray-700 hover:bg-gray-100 transition-colors"
+              style={{
+                width: "100%",
+                padding: "10px 14px",
+                background: "var(--bg-secondary)",
+                border: "none",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                fontSize: "12px",
+                fontWeight: 600,
+                color: "var(--text-primary)",
+                cursor: "pointer"
+              }}
             >
-              <span className="flex items-center gap-1.5">
-                <span>📎</span> Add More Detail (Event, Image Proof, Report Toggle)
-              </span>
+              <span>📎 Add More Detail (Event, Image Proof, Report Toggle)</span>
               <span>{showMoreDetails ? "▲" : "▼"}</span>
             </button>
 
             {showMoreDetails && (
-              <div className="p-4 space-y-3 bg-white border-t border-gray-100">
-                {/* Event Tag */}
-                <div className="space-y-1">
-                  <label className="text-xs font-medium text-gray-700">Associated Event / Campaign</label>
+              <div style={{ padding: "14px", display: "flex", flexDirection: "column", gap: "12px", background: "var(--bg-primary)", borderTop: "1px solid var(--border-default)" }}>
+                <div>
+                  <label style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", display: "block", marginBottom: "4px" }}>Associated Event / Campaign</label>
                   <input
                     type="text"
-                    placeholder="e.g. Super Bowl Campaign 2026, Summer Drop Promo"
+                    placeholder="e.g. Super Bowl 2026, TikTok Drop"
                     value={event}
                     onChange={(e) => setEvent(e.target.value)}
-                    className="w-full px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-xs text-gray-900 focus:ring-1 focus:ring-teal-500"
+                    className="input"
                   />
                 </div>
 
-                {/* Image Proof Upload */}
-                <div className="space-y-1.5">
-                  <label className="text-xs font-medium text-gray-700">Image Proof / Receipt / Invoice</label>
-                  <div className="flex items-center gap-3">
+                <div>
+                  <label style={{ fontSize: "12px", fontWeight: 500, color: "var(--text-secondary)", display: "block", marginBottom: "4px" }}>Image Proof / Receipt / Invoice</label>
+                  <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
                     <input
                       type="file"
                       ref={fileInputRef}
                       onChange={handleProofUpload}
                       accept="image/*,application/pdf"
-                      className="hidden"
+                      style={{ display: "none" }}
                     />
                     <button
                       type="button"
                       disabled={isUploadingImage}
                       onClick={() => fileInputRef.current?.click()}
-                      className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-xs font-medium border border-gray-300 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                      className="btn btn-secondary"
+                      style={{ fontSize: "12px", padding: "6px 12px" }}
                     >
                       <span>📸</span>
                       <span>{isUploadingImage ? "Uploading..." : "Upload Receipt / Bill"}</span>
                     </button>
                     {imageProofUrl && (
-                      <div className="flex items-center gap-2 text-xs">
-                        <a
-                          href={imageProofUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-teal-600 hover:underline font-medium truncate max-w-[200px]"
-                        >
-                          View Uploaded Proof
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "12px" }}>
+                        <a href={imageProofUrl} target="_blank" rel="noreferrer" style={{ color: "var(--accent)", fontWeight: 600, textDecoration: "underline" }}>
+                          View Proof Link
                         </a>
                         <button
                           type="button"
                           onClick={() => setImageProofUrl("")}
-                          className="text-rose-500 hover:text-rose-700 text-xs font-bold"
+                          style={{ color: "var(--error)", background: "none", border: "none", fontWeight: 700, cursor: "pointer" }}
                         >
                           ✕
                         </button>
@@ -608,53 +624,33 @@ export function TransactionModal({
                   </div>
                 </div>
 
-                {/* Not count in the report Toggle */}
-                <div className="flex items-center justify-between p-3 bg-amber-50/60 rounded-xl border border-amber-200/60">
-                  <div className="space-y-0.5">
-                    <span className="text-xs font-semibold text-gray-900 block">
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 12px", background: "var(--bg-secondary)", borderRadius: "8px", border: "1px solid var(--border-default)" }}>
+                  <div>
+                    <span style={{ fontSize: "12px", fontWeight: 600, color: "var(--text-primary)", display: "block" }}>
                       Not count in the report
                     </span>
-                    <span className="text-[11px] text-gray-500 block">
-                      Keep this transaction saved for notes/history without factoring into official P&L profit calculations.
+                    <span style={{ fontSize: "11px", color: "var(--text-muted)", display: "block" }}>
+                      Keep saved for records without factoring into official P&L profit calculations.
                     </span>
                   </div>
-                  <label className="relative inline-flex items-center cursor-pointer flex-shrink-0">
-                    <input
-                      type="checkbox"
-                      checked={isExcludedFromReport}
-                      onChange={(e) => setIsExcludedFromReport(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-amber-600"></div>
-                  </label>
+                  <input
+                    type="checkbox"
+                    checked={isExcludedFromReport}
+                    onChange={(e) => setIsExcludedFromReport(e.target.checked)}
+                    style={{ width: "18px", height: "18px", cursor: "pointer", accentColor: "var(--accent)" }}
+                  />
                 </div>
               </div>
             )}
           </div>
 
           {/* Footer Buttons */}
-          <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-100">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-semibold text-gray-600 hover:text-gray-800 hover:bg-gray-100 rounded-xl transition-colors"
-            >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: "10px", paddingTop: "12px", borderTop: "1px solid var(--border-default)" }}>
+            <button type="button" onClick={onClose} className="btn btn-secondary">
               Cancel
             </button>
-            <button
-              type="submit"
-              disabled={submitting || isUploadingImage}
-              className="px-5 py-2 text-xs font-bold text-white bg-teal-600 hover:bg-teal-700 rounded-xl shadow-sm hover:shadow transition-all disabled:opacity-50 flex items-center gap-1.5"
-            >
-              {submitting ? (
-                <>
-                  <span className="animate-spin">🌀</span> Saving...
-                </>
-              ) : initialData ? (
-                "Update Transaction"
-              ) : (
-                "Save Transaction"
-              )}
+            <button type="submit" disabled={submitting || isUploadingImage} className="btn btn-primary">
+              {submitting ? "Saving..." : initialData ? "Update Transaction" : "Save Transaction"}
             </button>
           </div>
         </form>
