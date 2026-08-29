@@ -55053,9 +55053,12 @@ async function generatePLReport(d1, targetYear, overrideExchangeRate) {
     const netProfitMargin = crossRev !== 0 ? netProfitUsd / crossRev * 100 : 0;
     runningCumulativeUsd += netProfitUsd;
     const accumulateProfitVnd = runningCumulativeUsd * exchangeRate;
+    const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const hasData = orderRev > 0 || manRev > 0 || refund > 0 || totalMonthCost > 0;
     monthsData.push({
       month: m3,
-      monthLabel: `Mth ${m3}`,
+      monthLabel: MONTH_NAMES[m3 - 1] || `Mth ${m3}`,
+      hasData,
       orderRevenue: orderRev,
       manualRevenue: manRev,
       totalRevenue: totRev,

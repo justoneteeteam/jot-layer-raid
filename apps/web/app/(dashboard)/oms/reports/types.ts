@@ -1,6 +1,7 @@
 export interface MonthlyPLData {
   month: number;
   monthLabel: string;
+  hasData?: boolean;
   orderRevenue: number;
   manualRevenue: number;
   totalRevenue: number;

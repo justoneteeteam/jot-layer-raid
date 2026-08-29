@@ -78,7 +78,8 @@ export async function initFinancialTables(d1: D1Database): Promise<void> {
 
 export interface MonthlyPLData {
   month: number; // 1 to 12
-  monthLabel: string;
+  monthLabel: string; // Jan..Dec
+  hasData: boolean;
   orderRevenue: number;
   manualRevenue: number;
   totalRevenue: number;
@@ -285,10 +286,13 @@ export async function generatePLReport(
 
     runningCumulativeUsd += netProfitUsd;
     const accumulateProfitVnd = runningCumulativeUsd * exchangeRate;
+    const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const hasData = orderRev > 0 || manRev > 0 || refund > 0 || totalMonthCost > 0;
 
     monthsData.push({
       month: m,
-      monthLabel: `Mth ${m}`,
+      monthLabel: MONTH_NAMES[m - 1] || `Mth ${m}`,
+      hasData,
       orderRevenue: orderRev,
       manualRevenue: manRev,
       totalRevenue: totRev,

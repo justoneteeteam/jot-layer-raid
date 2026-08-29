@@ -7,13 +7,14 @@ import { TransactionModal } from "./TransactionModal";
 import { exportPLToExcel } from "./excelExport";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "https://api-worker.justoneteeteam.workers.dev";
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export default function PLReportsPage() {
   const currentYear = new Date().getFullYear();
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
   const [exchangeRate, setExchangeRate] = useState<number>(26000);
   const [currencyMode, setCurrencyMode] = useState<"USD" | "VND" | "DUAL">("USD");
-  const [activeViewTab, setActiveViewTab] = useState<"pl_sheet" | "analytics" | "debts" | "ledger">("pl_sheet");
+  const [activeTab, setActiveTab] = useState<"overview" | "debts" | "ledger">("overview");
   const [selectedMonthFilter, setSelectedMonthFilter] = useState<number>(0); // 0 = all year
 
   // Data States
@@ -100,7 +101,8 @@ export default function PLReportsPage() {
   };
 
   // Update Global Exchange Rate
-  const handleSaveExchangeRate = async () => {
+  const handleSaveExchangeRate = async (newRate: number) => {
+    setExchangeRate(newRate);
     try {
       const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
       const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -109,7 +111,7 @@ export default function PLReportsPage() {
       await fetch(`${API_BASE}/api/oms/financials/settings`, {
         method: "PUT",
         headers,
-        body: JSON.stringify({ default_exchange_rate: exchangeRate })
+        body: JSON.stringify({ default_exchange_rate: newRate })
       });
       fetchReportData();
     } catch (_) {}
@@ -152,18 +154,68 @@ export default function PLReportsPage() {
     }
   };
 
-  // Number Formatter based on active currency mode
-  const formatVal = (usd: number, isVndCell: boolean = false) => {
-    if (isVndCell || currencyMode === "VND") {
-      const vnd = usd * exchangeRate;
-      const formatted = Math.round(vnd).toLocaleString();
-      return `${formatted} ₫`;
+  // Number Formatter: formats negative values in parentheses e.g. ($179.66) and empty values as —
+  const formatCell = (
+    val: number,
+    hasMonthData: boolean = true,
+    opts: { isVnd?: boolean; isMargin?: boolean; isNegativeRed?: boolean } = {}
+  ) => {
+    if (!hasMonthData && val === 0) {
+      return <span className="text-gray-400 font-normal">—</span>;
     }
+
+    if (opts.isMargin) {
+      if (val === 0 && !hasMonthData) return <span className="text-gray-400 font-normal">—</span>;
+      const isNeg = val < 0;
+      return (
+        <span className={isNeg ? "text-rose-600 font-semibold" : "text-gray-900 font-semibold"}>
+          {isNeg ? `(${Math.abs(val).toFixed(1)}%)` : `${val.toFixed(1)}%`}
+        </span>
+      );
+    }
+
+    if (opts.isVnd || currencyMode === "VND") {
+      const vndVal = opts.isVnd ? val : val * exchangeRate;
+      const isNeg = vndVal < 0;
+      const absVnd = Math.abs(Math.round(vndVal)).toLocaleString();
+      return (
+        <span className={isNeg ? "text-rose-600 font-semibold" : "text-gray-900"}>
+          {isNeg ? `(${absVnd} ₫)` : `${absVnd} ₫`}
+        </span>
+      );
+    }
+
+    const isNeg = val < 0;
+    const absUsd = Math.abs(val).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+
     if (currencyMode === "DUAL") {
-      const vnd = usd * exchangeRate;
-      return `$${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (${Math.round(vnd).toLocaleString()} ₫)`;
+      const vndVal = Math.abs(Math.round(val * exchangeRate)).toLocaleString();
+      return (
+        <span className={isNeg ? "text-rose-600 font-semibold" : "text-gray-900"}>
+          {isNeg ? `($${absUsd})` : `$${absUsd}`}{" "}
+          <span className="text-[10px] text-gray-500 font-normal">({vndVal} ₫)</span>
+        </span>
+      );
     }
-    return `$${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+    return (
+      <span className={isNeg ? "text-rose-600 font-semibold" : "text-gray-900"}>
+        {isNeg ? `($${absUsd})` : `$${absUsd}`}
+      </span>
+    );
+  };
+
+  const formatVndShort = (vnd: number) => {
+    if (Math.abs(vnd) >= 1_000_000_000) {
+      return `${(vnd / 1_000_000_000).toFixed(2)}B VND`;
+    }
+    if (Math.abs(vnd) >= 1_000_000) {
+      return `${(vnd / 1_000_000).toFixed(2)}M VND`;
+    }
+    return `${Math.round(vnd).toLocaleString()} ₫`;
   };
 
   const filteredTransactions = transactions.filter((tx) => {
@@ -182,87 +234,86 @@ export default function PLReportsPage() {
 
   return (
     <div className="p-6 max-w-[1600px] mx-auto space-y-6">
-      {/* Top Header & Global Actions */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-gray-200 shadow-sm">
+      {/* ── TOP HEADER: Profit & Loss — {year} ───────────────────────────── */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-3">
-            <span className="text-2xl">📈</span>
-            <h1 className="text-xl font-bold text-gray-900">Profit & Loss (P&L) Financials</h1>
-            <span className="bg-teal-100 text-teal-800 text-xs font-semibold px-2.5 py-0.5 rounded-full">
-              OMS Live Sync
-            </span>
-          </div>
-          <p className="text-xs text-gray-500 mt-1">
-            Track multi-currency revenue, detailed expense breakdowns, debts, and cumulative profit.
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
+            Profit & Loss — {selectedYear}
+          </h1>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Management view · USD · 1 USD = {exchangeRate.toLocaleString()} VND
           </p>
         </div>
 
-        {/* Global Action Buttons */}
+        {/* Top Right Action & Filter Toolbar */}
         <div className="flex flex-wrap items-center gap-3">
-          {/* Exchange Rate Badge & Setting */}
-          <div className="flex items-center gap-1.5 bg-gray-50 border border-gray-300 rounded-xl px-3 py-1.5 text-xs">
-            <span className="text-gray-500 font-medium">1 USD =</span>
-            <input
-              type="number"
-              value={exchangeRate}
-              onChange={(e) => setExchangeRate(parseFloat(e.target.value) || 26000)}
-              onBlur={handleSaveExchangeRate}
-              className="w-16 bg-white border border-gray-300 rounded px-1.5 py-0.5 text-xs font-bold text-gray-800 text-right focus:ring-1 focus:ring-teal-500"
-            />
-            <span className="text-gray-500 font-medium">VND</span>
+          {/* Year Dropdown Selector */}
+          <div className="flex items-center gap-2 bg-white border border-gray-300 rounded-xl px-3 py-1.5 shadow-sm">
+            <span className="text-xs font-semibold text-gray-600">Year:</span>
+            <select
+              value={selectedYear}
+              onChange={(e) => setSelectedYear(parseInt(e.target.value, 10))}
+              className="text-xs font-bold text-gray-900 bg-transparent cursor-pointer focus:outline-none"
+            >
+              {(report?.availableYears || [2024, 2025, 2026, 2027]).map((yr) => (
+                <option key={yr} value={yr}>
+                  {yr}
+                </option>
+              ))}
+            </select>
           </div>
 
-          {/* Currency Toggle */}
-          <div className="flex bg-gray-100 p-1 rounded-xl text-xs font-medium">
+          {/* Currency Switcher */}
+          <div className="flex bg-gray-100 p-1 rounded-xl text-xs font-medium border border-gray-200/60">
             <button
               onClick={() => setCurrencyMode("USD")}
               className={`px-2.5 py-1 rounded-lg transition-all ${
-                currencyMode === "USD" ? "bg-white text-teal-700 font-bold shadow-sm" : "text-gray-600"
+                currencyMode === "USD" ? "bg-white text-gray-900 font-bold shadow-sm" : "text-gray-600"
               }`}
             >
-              USD ($)
+              USD
             </button>
             <button
               onClick={() => setCurrencyMode("VND")}
               className={`px-2.5 py-1 rounded-lg transition-all ${
-                currencyMode === "VND" ? "bg-white text-teal-700 font-bold shadow-sm" : "text-gray-600"
+                currencyMode === "VND" ? "bg-white text-gray-900 font-bold shadow-sm" : "text-gray-600"
               }`}
             >
-              VND (₫)
+              VND
             </button>
             <button
               onClick={() => setCurrencyMode("DUAL")}
               className={`px-2.5 py-1 rounded-lg transition-all ${
-                currencyMode === "DUAL" ? "bg-white text-teal-700 font-bold shadow-sm" : "text-gray-600"
+                currencyMode === "DUAL" ? "bg-white text-gray-900 font-bold shadow-sm" : "text-gray-600"
               }`}
             >
               Both
             </button>
           </div>
 
-          {/* Live Order Sync */}
+          {/* Sync Orders Button */}
           <button
             onClick={handleSyncOrders}
             disabled={syncingOrders}
-            className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+            className="px-3 py-2 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors disabled:opacity-50"
             title="Sync latest live orders from WooCommerce, ShopBase, and Astro"
           >
             <span>{syncingOrders ? "🔄" : "⚡"}</span>
             <span>{syncingOrders ? "Syncing..." : "Sync Orders"}</span>
           </button>
 
-          {/* Excel Export Button */}
+          {/* Export Excel Button */}
           {report && (
             <button
               onClick={() => exportPLToExcel(report)}
-              className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+              className="px-3 py-2 bg-white hover:bg-gray-50 text-emerald-700 border border-emerald-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
             >
               <span>📥</span>
               <span>Export Excel</span>
             </button>
           )}
 
-          {/* + Import / Add Transaction Button (Right Corner) */}
+          {/* + Add / Import Transaction Button */}
           <button
             onClick={() => {
               setEditingTransaction(null);
@@ -272,65 +323,6 @@ export default function PLReportsPage() {
           >
             <span className="text-base leading-none">+</span>
             <span>Add / Import Transaction</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Year Selection Tabs & Navigation */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-gray-200 pb-3">
-        {/* Year Tabs */}
-        <div className="flex items-center gap-2 overflow-x-auto">
-          {(report?.availableYears || [2024, 2025, 2026, 2027]).map((yr) => (
-            <button
-              key={yr}
-              onClick={() => setSelectedYear(yr)}
-              className={`px-4 py-1.5 rounded-xl text-xs font-bold transition-all ${
-                selectedYear === yr
-                  ? "bg-gray-900 text-white shadow-sm"
-                  : "bg-white border border-gray-200 text-gray-600 hover:bg-gray-50"
-              }`}
-            >
-              {yr === 2024 ? "Overall 2024" : yr}
-            </button>
-          ))}
-        </div>
-
-        {/* View Mode Tabs */}
-        <div className="flex bg-gray-100 p-1 rounded-xl text-xs font-semibold">
-          <button
-            onClick={() => setActiveViewTab("pl_sheet")}
-            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
-              activeViewTab === "pl_sheet" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"
-            }`}
-          >
-            <span>📊</span> P&L Spreadsheet
-          </button>
-          <button
-            onClick={() => setActiveViewTab("analytics")}
-            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
-              activeViewTab === "analytics" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"
-            }`}
-          >
-            <span>📈</span> Analytics & Charts
-          </button>
-          <button
-            onClick={() => setActiveViewTab("debts")}
-            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
-              activeViewTab === "debts" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"
-            }`}
-          >
-            <span>💳</span> Debt Tracker
-            {debtSummary && debtSummary.totalUnpaidUsd > 0 && (
-              <span className="w-2 h-2 rounded-full bg-amber-500 ml-0.5" />
-            )}
-          </button>
-          <button
-            onClick={() => setActiveViewTab("ledger")}
-            className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 ${
-              activeViewTab === "ledger" ? "bg-white text-gray-900 shadow-sm" : "text-gray-500 hover:text-gray-900"
-            }`}
-          >
-            <span>📝</span> Transaction Ledger
           </button>
         </div>
       </div>
@@ -347,618 +339,591 @@ export default function PLReportsPage() {
       {loading && !report ? (
         <div className="p-16 flex flex-col items-center justify-center text-gray-400 space-y-3 bg-white rounded-2xl border border-gray-200">
           <div className="w-8 h-8 border-3 border-gray-200 border-t-teal-600 rounded-full animate-spin"></div>
-          <p className="text-xs font-medium">Calculating financial metrics & syncing orders...</p>
+          <p className="text-xs font-medium">Calculating financial metrics & syncing live orders...</p>
         </div>
       ) : report ? (
         <>
-          {/* TAB 1: P&L Spreadsheet Matrix View */}
-          {activeViewTab === "pl_sheet" && (
-            <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
-              {/* Spreadsheet Header Info */}
-              <div className="p-4 bg-gray-50/70 border-b border-gray-200 flex items-center justify-between text-xs">
-                <div className="flex items-center gap-4">
-                  <span className="font-bold text-gray-900 uppercase tracking-wide">
-                    {report.companyName} — Profit & Loss Matrix ({report.year})
-                  </span>
-                  <span className="text-gray-500">
-                    Rate: <strong className="text-gray-800">{report.exchangeRate.toLocaleString()} VND</strong> / USD
-                  </span>
-                </div>
-                <div className="text-gray-500 text-[11px]">
-                  Showing Months 1 through 12 + Total YTD
-                </div>
+          {/* ── 1. TOP SECTION: 5 KPI SUMMARY CARDS ─────────────────────── */}
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+            {/* 1. Gross Revenue */}
+            <div className="bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm flex flex-col justify-between">
+              <span className="text-xs font-semibold text-gray-500">Gross Revenue</span>
+              <div className="text-2xl font-black text-gray-900 mt-2 tracking-tight">
+                ${report.totals.crossRevenue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <span className="text-[11px] text-gray-400 mt-1">Total orders & sales</span>
+            </div>
+
+            {/* 2. Total Expenses */}
+            <div className="bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm flex flex-col justify-between">
+              <span className="text-xs font-semibold text-gray-500">Total Expenses</span>
+              <div className="text-2xl font-black text-gray-900 mt-2 tracking-tight">
+                ${report.totals.totalCost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <span className="text-[11px] text-gray-400 mt-1">
+                {report.spendDistribution.length} active spend categories
+              </span>
+            </div>
+
+            {/* 3. Net Profit */}
+            <div className="bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm flex flex-col justify-between">
+              <span className="text-xs font-semibold text-gray-500">Net Profit</span>
+              <div
+                className={`text-2xl font-black mt-2 tracking-tight ${
+                  report.totals.netProfitUsd >= 0 ? "text-gray-900" : "text-rose-600"
+                }`}
+              >
+                ${report.totals.netProfitUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <span className="text-[11px] text-emerald-600 font-semibold mt-1">
+                {formatVndShort(report.totals.netProfitVnd)}
+              </span>
+            </div>
+
+            {/* 4. Net Margin */}
+            <div className="bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm flex flex-col justify-between">
+              <span className="text-xs font-semibold text-gray-500">Net Margin</span>
+              <div className="text-2xl font-black text-gray-900 mt-2 tracking-tight">
+                {report.totals.netProfitMargin.toFixed(1)}%
+              </div>
+              <span className="text-[11px] text-gray-400 mt-1">Profit to revenue ratio</span>
+            </div>
+
+            {/* 5. Unsettled Debt */}
+            <div className="bg-white p-5 rounded-2xl border border-gray-200/80 shadow-sm flex flex-col justify-between">
+              <span className="text-xs font-semibold text-gray-500">Unsettled Debt</span>
+              <div className="text-2xl font-black text-gray-900 mt-2 tracking-tight">
+                ${(debtSummary?.totalUnpaidUsd || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+              <span className="text-[11px] text-gray-400 mt-1">
+                {debtSummary?.debts.filter((d) => d.debtStatus === "unpaid").length || 0} pending payables
+              </span>
+            </div>
+          </div>
+
+          {/* ── 2. MIDDLE SECTION: VISUAL PERFORMANCE CHARTS ─────────────── */}
+          <FinancialCharts
+            year={report.year}
+            spendDistribution={report.spendDistribution}
+            monthlyTrends={report.monthlyTrends}
+            totalRevenue={report.totals.crossRevenue}
+            totalExpenses={report.totals.totalCost}
+            netProfit={report.totals.netProfitUsd}
+            netMargin={report.totals.netProfitMargin}
+            currencyMode={currencyMode}
+            exchangeRate={exchangeRate}
+            selectedMonthFilter={selectedMonthFilter}
+            onSelectMonth={(m) => setSelectedMonthFilter(m)}
+          />
+
+          {/* ── 3. BOTTOM SECTION: P&L SPREADSHEET MATRIX ────────────────── */}
+          <div className="bg-white border border-gray-200/90 rounded-2xl shadow-sm overflow-hidden">
+            {/* Spreadsheet Card Header */}
+            <div className="p-5 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-gray-50/60">
+              <div>
+                <h3 className="font-bold text-gray-900 text-base">P&L Spreadsheet</h3>
+                <p className="text-xs text-gray-500 mt-0.5">Google Sheets-style monthly financial matrix</p>
               </div>
 
-              {/* Matrix Table */}
+              {/* Sub-view switcher for drilldowns */}
+              <div className="flex items-center gap-2">
+                <div className="flex bg-gray-200/70 p-1 rounded-xl text-xs font-semibold">
+                  <button
+                    onClick={() => setActiveTab("overview")}
+                    className={`px-3 py-1 rounded-lg transition-all ${
+                      activeTab === "overview" ? "bg-white text-gray-900 shadow-sm" : "text-gray-600"
+                    }`}
+                  >
+                    P&L Matrix
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("debts")}
+                    className={`px-3 py-1 rounded-lg transition-all flex items-center gap-1 ${
+                      activeTab === "debts" ? "bg-white text-gray-900 shadow-sm" : "text-gray-600"
+                    }`}
+                  >
+                    <span>💳 Debt Tracker</span>
+                    {debtSummary && debtSummary.totalUnpaidUsd > 0 && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                    )}
+                  </button>
+                  <button
+                    onClick={() => setActiveTab("ledger")}
+                    className={`px-3 py-1 rounded-lg transition-all ${
+                      activeTab === "ledger" ? "bg-white text-gray-900 shadow-sm" : "text-gray-600"
+                    }`}
+                  >
+                    📝 Transaction Ledger
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* TAB CONTENT 1: Full P&L Spreadsheet Matrix */}
+            {activeTab === "overview" && (
               <div className="overflow-x-auto">
-                <table className="w-full text-xs text-left border-collapse min-w-[1100px]">
+                <table className="w-full text-xs text-left border-collapse min-w-[1000px]">
                   <thead>
-                    <tr className="bg-gray-100/80 text-gray-700 border-b border-gray-300 font-bold">
-                      <th className="py-2.5 px-4 sticky left-0 bg-gray-100 z-10 w-64 border-r border-gray-200">
+                    <tr className="bg-gray-100/70 text-gray-600 border-b border-gray-200 font-bold">
+                      <th className="py-3 px-4 sticky left-0 bg-gray-100/95 z-10 w-60 border-r border-gray-200 text-gray-700 uppercase tracking-wider text-[11px]">
                         Category / Metric
                       </th>
-                      {Array.from({ length: 12 }, (_, i) => (
-                        <th key={i + 1} className="py-2.5 px-3 text-right font-bold border-r border-gray-200">
-                          Mth {i + 1}
+                      {MONTH_NAMES.map((name) => (
+                        <th key={name} className="py-3 px-3 text-right font-bold border-r border-gray-200 text-gray-700">
+                          {name}
                         </th>
                       ))}
-                      <th className="py-2.5 px-4 text-right font-black bg-gray-200/90 text-gray-900">
-                        Total {report.year}
+                      <th className="py-3 px-4 text-right font-black bg-gray-200/90 text-gray-900 w-28">
+                        YTD
                       </th>
                     </tr>
                   </thead>
-                  <tbody>
-                    {/* 1. REVENUE BANNER */}
-                    <tr className="bg-[#00FF00] text-black font-extrabold border-b border-green-600">
-                      <td colSpan={14} className="py-2 px-4 uppercase tracking-wider text-xs">
+                  <tbody className="divide-y divide-gray-100">
+                    {/* ── SECTION 1: REVENUE ──────────────────────────────── */}
+                    <tr className="bg-gray-50/90 font-bold text-gray-900 border-y border-gray-200">
+                      <td colSpan={14} className="py-2 px-4 uppercase tracking-wider text-[11px] text-gray-800">
                         Revenue
                       </td>
                     </tr>
 
-                    {/* Revenue (Gross Orders + Manual) */}
-                    <tr className="hover:bg-gray-50/70 border-b border-gray-200 transition-colors">
-                      <td className="py-2.5 px-4 font-medium text-gray-800 sticky left-0 bg-white border-r border-gray-200">
+                    {/* Revenue Row */}
+                    <tr className="hover:bg-gray-50/50 transition-colors">
+                      <td className="py-2.5 px-4 font-medium text-gray-700 sticky left-0 bg-white border-r border-gray-200">
                         Revenue
                       </td>
                       {report.months.map((m) => (
-                        <td key={m.month} className="py-2.5 px-3 text-right text-gray-900 border-r border-gray-200">
-                          {formatVal(m.totalRevenue)}
+                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-gray-200">
+                          {formatCell(m.totalRevenue, m.hasData)}
                         </td>
                       ))}
-                      <td className="py-2.5 px-4 text-right font-bold text-gray-900 bg-gray-50">
-                        {formatVal(report.totals.totalRevenue)}
+                      <td className="py-2.5 px-4 text-right font-bold text-gray-900 bg-gray-50/60">
+                        {formatCell(report.totals.totalRevenue, true)}
                       </td>
                     </tr>
 
-                    {/* Refund */}
-                    <tr className="hover:bg-gray-50/70 border-b border-gray-200 transition-colors">
-                      <td className="py-2.5 px-4 font-medium text-gray-800 sticky left-0 bg-white border-r border-gray-200">
+                    {/* Refund Row */}
+                    <tr className="hover:bg-gray-50/50 transition-colors">
+                      <td className="py-2.5 px-4 font-medium text-gray-700 sticky left-0 bg-white border-r border-gray-200">
                         Refund
                       </td>
                       {report.months.map((m) => (
-                        <td key={m.month} className="py-2.5 px-3 text-right text-rose-600 border-r border-gray-200">
-                          {m.refund > 0 ? `-${formatVal(m.refund)}` : formatVal(0)}
+                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-gray-200">
+                          {m.refund > 0 ? formatCell(-m.refund, true) : formatCell(0, m.hasData)}
                         </td>
                       ))}
-                      <td className="py-2.5 px-4 text-right font-bold text-rose-600 bg-gray-50">
-                        {report.totals.refund > 0 ? `-${formatVal(report.totals.refund)}` : formatVal(0)}
+                      <td className="py-2.5 px-4 text-right font-bold text-gray-900 bg-gray-50/60">
+                        {report.totals.refund > 0 ? formatCell(-report.totals.refund, true) : formatCell(0, true)}
                       </td>
                     </tr>
 
-                    {/* Cross-Revenue (Gross Revenue = Revenue - Refund) */}
-                    <tr className="bg-[#D9EAD3] font-bold border-b border-green-300 text-green-950">
-                      <td className="py-2.5 px-4 sticky left-0 bg-[#D9EAD3] border-r border-green-300">
-                        Cross-Revenue
+                    {/* Gross Revenue Row */}
+                    <tr className="bg-emerald-50/50 font-bold border-y border-emerald-100 text-gray-900">
+                      <td className="py-2.5 px-4 sticky left-0 bg-emerald-50/90 border-r border-emerald-100 font-bold">
+                        Gross Revenue
                       </td>
                       {report.months.map((m) => (
-                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-green-300">
-                          {formatVal(m.crossRevenue)}
+                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-emerald-100 font-bold">
+                          {formatCell(m.crossRevenue, m.hasData)}
                         </td>
                       ))}
-                      <td className="py-2.5 px-4 text-right font-black bg-[#C2E0B8]">
-                        {formatVal(report.totals.crossRevenue)}
+                      <td className="py-2.5 px-4 text-right font-black bg-emerald-100/70 text-emerald-950">
+                        {formatCell(report.totals.crossRevenue, true)}
                       </td>
                     </tr>
 
-                    {/* Spacer */}
-                    <tr className="h-2 bg-gray-50/40">
-                      <td colSpan={14}></td>
+                    {/* ── SECTION 2: EXPENSES ─────────────────────────────── */}
+                    <tr className="bg-gray-50/90 font-bold text-gray-900 border-y border-gray-200">
+                      <td colSpan={14} className="py-2 px-4 uppercase tracking-wider text-[11px] text-gray-800">
+                        Expenses
+                      </td>
                     </tr>
 
-                    {/* 2. COST CATEGORIES */}
+                    {/* Expense Categories */}
                     {report.categoriesList.map((cat, idx) => {
-                      const totalCatCost = report.totals.costCategories[cat] || 0;
+                      const totalCat = report.totals.costCategories[cat] || 0;
                       return (
                         <tr
                           key={cat}
-                          className={`hover:bg-gray-50 border-b border-gray-100 transition-colors ${
-                            idx % 2 === 0 ? "bg-white" : "bg-gray-50/30"
+                          className={`hover:bg-gray-50/50 transition-colors ${
+                            idx % 2 === 1 ? "bg-gray-50/20" : ""
                           }`}
                         >
-                          <td className="py-2.5 px-4 font-medium text-gray-800 sticky left-0 bg-inherit border-r border-gray-200">
+                          <td className="py-2.5 px-4 font-medium text-gray-700 sticky left-0 bg-inherit border-r border-gray-200">
                             {cat}
                           </td>
                           {report.months.map((m) => {
                             const val = m.costCategories[cat] || 0;
                             return (
-                              <td
-                                key={m.month}
-                                className="py-2.5 px-3 text-right text-gray-700 border-r border-gray-200"
-                              >
-                                {val > 0 ? formatVal(val) : "—"}
+                              <td key={m.month} className="py-2.5 px-3 text-right border-r border-gray-200">
+                                {formatCell(val, m.hasData && val > 0)}
                               </td>
                             );
                           })}
-                          <td className="py-2.5 px-4 text-right font-bold text-gray-900 bg-gray-50">
-                            {totalCatCost > 0 ? formatVal(totalCatCost) : "—"}
+                          <td className="py-2.5 px-4 text-right font-bold text-gray-900 bg-gray-50/60">
+                            {formatCell(totalCat, totalCat > 0)}
                           </td>
                         </tr>
                       );
                     })}
 
-                    {/* TOTAL COST Row */}
-                    <tr className="bg-[#FFF2CC] font-bold border-t-2 border-b-2 border-amber-300 text-amber-950">
-                      <td className="py-2.5 px-4 uppercase sticky left-0 bg-[#FFF2CC] border-r border-amber-300">
-                        TOTAL COST
+                    {/* Total Expenses Row */}
+                    <tr className="bg-amber-50/60 font-bold border-y border-amber-200 text-gray-900">
+                      <td className="py-2.5 px-4 uppercase sticky left-0 bg-amber-50/95 border-r border-amber-200 font-bold text-[11px]">
+                        Total Expenses
                       </td>
                       {report.months.map((m) => (
-                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-amber-300">
-                          {formatVal(m.totalCost)}
+                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-amber-200 font-bold">
+                          {formatCell(m.totalCost, m.hasData)}
                         </td>
                       ))}
-                      <td className="py-2.5 px-4 text-right font-black bg-[#FFE599]">
-                        {formatVal(report.totals.totalCost)}
+                      <td className="py-2.5 px-4 text-right font-black bg-amber-100/70 text-amber-950">
+                        {formatCell(report.totals.totalCost, true)}
                       </td>
                     </tr>
 
-                    {/* Spacer */}
-                    <tr className="h-2 bg-gray-50/40">
-                      <td colSpan={14}></td>
-                    </tr>
-
-                    {/* 3. NET PROFIT ($ USD) */}
-                    <tr className="bg-[#FFF2CC]/90 font-bold border-b border-amber-200">
-                      <td className="py-2.5 px-4 sticky left-0 bg-[#FFF2CC] border-r border-amber-200 text-gray-900">
-                        NET PROFIT ($)
-                      </td>
-                      {report.months.map((m) => {
-                        const isNeg = m.netProfitUsd < 0;
-                        return (
-                          <td
-                            key={m.month}
-                            className={`py-2.5 px-3 text-right border-r border-amber-200 font-bold ${
-                              isNeg ? "text-rose-600" : "text-emerald-700"
-                            }`}
-                          >
-                            {isNeg ? `-$${Math.abs(m.netProfitUsd).toLocaleString(undefined, { minimumFractionDigits: 2 })}` : `$${m.netProfitUsd.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
-                          </td>
-                        );
-                      })}
-                      <td
-                        className={`py-2.5 px-4 text-right font-black bg-[#FFE599] ${
-                          report.totals.netProfitUsd < 0 ? "text-rose-700" : "text-emerald-800"
-                        }`}
-                      >
-                        {report.totals.netProfitUsd < 0
-                          ? `-$${Math.abs(report.totals.netProfitUsd).toLocaleString(undefined, { minimumFractionDigits: 2 })}`
-                          : `$${report.totals.netProfitUsd.toLocaleString(undefined, { minimumFractionDigits: 2 })}`}
+                    {/* ── SECTION 3: PROFITABILITY ─────────────────────────── */}
+                    <tr className="bg-gray-50/90 font-bold text-gray-900 border-y border-gray-200">
+                      <td colSpan={14} className="py-2 px-4 uppercase tracking-wider text-[11px] text-gray-800">
+                        Profitability
                       </td>
                     </tr>
 
-                    {/* NET PROFIT (VND) */}
-                    <tr className="hover:bg-gray-50 border-b border-gray-200 font-semibold">
-                      <td className="py-2.5 px-4 sticky left-0 bg-white border-r border-gray-200 text-gray-800">
-                        NET PROFIT (VND)
+                    {/* Net Profit ($ USD) */}
+                    <tr className="bg-white font-bold hover:bg-gray-50/50">
+                      <td className="py-2.5 px-4 sticky left-0 bg-white border-r border-gray-200 text-gray-900 font-bold">
+                        Net Profit ($)
                       </td>
-                      {report.months.map((m) => {
-                        const isNeg = m.netProfitVnd < 0;
-                        return (
-                          <td
-                            key={m.month}
-                            className={`py-2.5 px-3 text-right border-r border-gray-200 ${
-                              isNeg ? "text-rose-600" : "text-emerald-700"
-                            }`}
-                          >
-                            {Math.round(m.netProfitVnd).toLocaleString()} ₫
-                          </td>
-                        );
-                      })}
-                      <td
-                        className={`py-2.5 px-4 text-right font-bold bg-gray-50 ${
-                          report.totals.netProfitVnd < 0 ? "text-rose-700" : "text-emerald-800"
-                        }`}
-                      >
-                        {Math.round(report.totals.netProfitVnd).toLocaleString()} ₫
+                      {report.months.map((m) => (
+                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-gray-200 font-bold">
+                          {formatCell(m.netProfitUsd, m.hasData, { isNegativeRed: true })}
+                        </td>
+                      ))}
+                      <td className="py-2.5 px-4 text-right font-black bg-gray-100 text-gray-900">
+                        {formatCell(report.totals.netProfitUsd, true, { isNegativeRed: true })}
                       </td>
                     </tr>
 
-                    {/* Net Profit Margin % */}
-                    <tr className="hover:bg-gray-50 border-b border-gray-200">
+                    {/* Net Profit (VND) */}
+                    <tr className="bg-white hover:bg-gray-50/50">
+                      <td className="py-2.5 px-4 sticky left-0 bg-white border-r border-gray-200 text-gray-700 font-medium">
+                        Net Profit (VND)
+                      </td>
+                      {report.months.map((m) => (
+                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-gray-200 font-semibold">
+                          {formatCell(m.netProfitVnd, m.hasData, { isVnd: true, isNegativeRed: true })}
+                        </td>
+                      ))}
+                      <td className="py-2.5 px-4 text-right font-bold bg-gray-100 text-gray-900">
+                        {formatCell(report.totals.netProfitVnd, true, { isVnd: true, isNegativeRed: true })}
+                      </td>
+                    </tr>
+
+                    {/* Net Margin % */}
+                    <tr className="bg-white hover:bg-gray-50/50">
                       <td className="py-2 px-4 sticky left-0 bg-white border-r border-gray-200 text-gray-700 font-medium">
-                        Net Profit Margin %
+                        Net Margin %
                       </td>
                       {report.months.map((m) => (
-                        <td
-                          key={m.month}
-                          className={`py-2 px-3 text-right border-r border-gray-200 font-semibold ${
-                            m.netProfitMargin < 0 ? "text-rose-600" : "text-gray-900"
-                          }`}
-                        >
-                          {m.netProfitMargin.toFixed(2)}%
+                        <td key={m.month} className="py-2 px-3 text-right border-r border-gray-200">
+                          {formatCell(m.netProfitMargin, m.hasData, { isMargin: true })}
                         </td>
                       ))}
-                      <td
-                        className={`py-2 px-4 text-right font-bold bg-gray-50 ${
-                          report.totals.netProfitMargin < 0 ? "text-rose-600" : "text-gray-900"
-                        }`}
-                      >
-                        {report.totals.netProfitMargin.toFixed(2)}%
+                      <td className="py-2 px-4 text-right font-bold bg-gray-100 text-gray-900">
+                        {formatCell(report.totals.netProfitMargin, true, { isMargin: true })}
                       </td>
                     </tr>
 
-                    {/* Accumulate PROFIT (VND) */}
-                    <tr className="bg-gray-100/70 border-b border-gray-300 font-bold">
-                      <td className="py-2.5 px-4 uppercase sticky left-0 bg-gray-100 border-r border-gray-300 text-gray-900">
-                        Accumulate PROFIT (VND)
+                    {/* Accumulate Profit (VND) */}
+                    <tr className="bg-gray-50/60 font-bold border-t border-gray-200">
+                      <td className="py-2.5 px-4 uppercase sticky left-0 bg-gray-50 border-r border-gray-200 text-gray-800 text-[11px]">
+                        Accumulate Profit (VND)
                       </td>
                       {report.months.map((m) => (
-                        <td
-                          key={m.month}
-                          className={`py-2.5 px-3 text-right border-r border-gray-300 ${
-                            m.accumulateProfitVnd < 0 ? "text-rose-600" : "text-gray-900"
-                          }`}
-                        >
-                          {Math.round(m.accumulateProfitVnd).toLocaleString()} ₫
+                        <td key={m.month} className="py-2.5 px-3 text-right border-r border-gray-200">
+                          {formatCell(m.accumulateProfitVnd, m.hasData, { isVnd: true })}
                         </td>
                       ))}
                       <td className="py-2.5 px-4 text-right font-black bg-gray-200 text-gray-900">
-                        {Math.round(report.totals.accumulateProfitVnd).toLocaleString()} ₫
+                        {formatCell(report.totals.accumulateProfitVnd, true, { isVnd: true })}
                       </td>
                     </tr>
                   </tbody>
                 </table>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* TAB 2: Analytics & Visual Charts */}
-          {activeViewTab === "analytics" && (
-            <div className="space-y-6">
-              {/* KPI Summary Cards */}
-              <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
-                {/* 1. Gross Revenue */}
-                <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                  <span className="text-[11px] font-bold text-gray-500 uppercase">Gross Revenue</span>
-                  <div className="text-lg font-bold text-emerald-600 mt-1">
-                    {formatVal(report.totals.crossRevenue)}
+            {/* TAB CONTENT 2: Debt Tracker */}
+            {activeTab === "debts" && (
+              <div className="p-5 space-y-4">
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pb-3 border-b border-gray-100">
+                  <div className="text-xs text-gray-600">
+                    Track payables, supplier loans, and credit balances with due dates and settlement receipts.
                   </div>
-                  <span className="text-[11px] text-gray-400">Total orders & manual income</span>
-                </div>
-
-                {/* 2. Total Cost */}
-                <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                  <span className="text-[11px] font-bold text-gray-500 uppercase">Total Expenses</span>
-                  <div className="text-lg font-bold text-rose-600 mt-1">
-                    {formatVal(report.totals.totalCost)}
-                  </div>
-                  <span className="text-[11px] text-gray-400">{report.spendDistribution.length} active categories</span>
-                </div>
-
-                {/* 3. Net Profit (USD) */}
-                <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                  <span className="text-[11px] font-bold text-gray-500 uppercase">Net Profit (USD)</span>
-                  <div
-                    className={`text-lg font-bold mt-1 ${
-                      report.totals.netProfitUsd >= 0 ? "text-blue-600" : "text-rose-600"
-                    }`}
-                  >
-                    ${report.totals.netProfitUsd.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                  </div>
-                  <span className="text-[11px] text-gray-400">Margin: {report.totals.netProfitMargin.toFixed(1)}%</span>
-                </div>
-
-                {/* 4. Net Profit (VND) */}
-                <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                  <span className="text-[11px] font-bold text-gray-500 uppercase">Net Profit (VND)</span>
-                  <div
-                    className={`text-lg font-bold mt-1 ${
-                      report.totals.netProfitVnd >= 0 ? "text-teal-700" : "text-rose-600"
-                    }`}
-                  >
-                    {Math.round(report.totals.netProfitVnd).toLocaleString()} ₫
-                  </div>
-                  <span className="text-[11px] text-gray-400">At {exchangeRate.toLocaleString()} VND/USD</span>
-                </div>
-
-                {/* 5. Outstanding Debt */}
-                <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                  <span className="text-[11px] font-bold text-gray-500 uppercase">Unsettled Debts</span>
-                  <div className="text-lg font-bold text-amber-600 mt-1">
-                    {debtSummary ? formatVal(debtSummary.totalUnpaidUsd) : "$0.00"}
-                  </div>
-                  <span className="text-[11px] text-gray-400">
-                    {debtSummary?.debts.filter((d) => d.debtStatus === "unpaid").length || 0} pending payables
-                  </span>
-                </div>
-              </div>
-
-              {/* SVG Charts: Donut + Column Chart */}
-              <FinancialCharts
-                spendDistribution={report.spendDistribution}
-                monthlyTrends={report.monthlyTrends}
-                currencyMode={currencyMode}
-                exchangeRate={exchangeRate}
-                selectedMonthFilter={selectedMonthFilter}
-                onSelectMonth={(m) => setSelectedMonthFilter(m)}
-              />
-            </div>
-          )}
-
-          {/* TAB 3: Debt & Payables Tracker */}
-          {activeViewTab === "debts" && (
-            <div className="space-y-4">
-              <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-4">
-                <div>
-                  <h3 className="font-bold text-gray-900 text-base flex items-center gap-2">
-                    <span>💳</span> Debt & Payables Overview
-                  </h3>
-                  <p className="text-xs text-gray-500">
-                    Track loans, supplier credits, and credit lines with due dates and settlement records.
-                  </p>
-                </div>
-                <div className="flex items-center gap-4 text-xs font-semibold">
-                  <div className="bg-amber-50 border border-amber-200 text-amber-800 px-3 py-2 rounded-xl">
-                    <span>Total Unsettled: </span>
-                    <strong className="text-amber-950 font-bold">
-                      {debtSummary ? formatVal(debtSummary.totalUnpaidUsd) : "$0.00"}
-                    </strong>
-                  </div>
-                  <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-3 py-2 rounded-xl">
-                    <span>Settled / Paid: </span>
-                    <strong className="text-emerald-950 font-bold">
-                      {debtSummary ? formatVal(debtSummary.totalPaidUsd) : "$0.00"}
-                    </strong>
+                  <div className="flex items-center gap-3 text-xs font-semibold">
+                    <div className="bg-amber-50 border border-amber-200 text-amber-900 px-3 py-1.5 rounded-xl">
+                      Unsettled: <strong>${(debtSummary?.totalUnpaidUsd || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+                    </div>
+                    <div className="bg-emerald-50 border border-emerald-200 text-emerald-900 px-3 py-1.5 rounded-xl">
+                      Paid: <strong>${(debtSummary?.totalPaidUsd || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+                    </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Debt Records Table */}
-              <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
-                <table className="w-full text-xs text-left">
-                  <thead className="bg-gray-50 text-gray-600 border-b border-gray-200">
-                    <tr>
-                      <th className="py-3 px-4">Date</th>
-                      <th className="py-3 px-4">Counterparty</th>
-                      <th className="py-3 px-4">Category</th>
-                      <th className="py-3 px-4 text-right">Amount (USD)</th>
-                      <th className="py-3 px-4 text-right">Amount (VND)</th>
-                      <th className="py-3 px-4">Due Date</th>
-                      <th className="py-3 px-4">Status</th>
-                      <th className="py-3 px-4">Proof</th>
-                      <th className="py-3 px-4 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {(!debtSummary || debtSummary.debts.length === 0) ? (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-gray-50 text-gray-600 border-b border-gray-200">
                       <tr>
-                        <td colSpan={9} className="py-8 text-center text-gray-400">
-                          No debt or payable records found. Click "+ Add / Import Transaction" to record one.
-                        </td>
+                        <th className="py-2.5 px-4">Date</th>
+                        <th className="py-2.5 px-4">Counterparty</th>
+                        <th className="py-2.5 px-4">Category</th>
+                        <th className="py-2.5 px-4 text-right">Amount (USD)</th>
+                        <th className="py-2.5 px-4 text-right">Amount (VND)</th>
+                        <th className="py-2.5 px-4">Due Date</th>
+                        <th className="py-2.5 px-4">Status</th>
+                        <th className="py-2.5 px-4">Proof</th>
+                        <th className="py-2.5 px-4 text-right">Actions</th>
                       </tr>
-                    ) : (
-                      debtSummary.debts.map((d) => (
-                        <tr key={d.id} className="hover:bg-gray-50">
-                          <td className="py-3 px-4 font-medium text-gray-700">
-                            {d.transactionDate?.split("T")[0]}
-                          </td>
-                          <td className="py-3 px-4 font-semibold text-gray-900">
-                            {d.debtCounterparty || "—"}
-                          </td>
-                          <td className="py-3 px-4 text-gray-600">{d.category}</td>
-                          <td className="py-3 px-4 text-right font-semibold text-gray-900">
-                            ${d.amountUsd?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                          </td>
-                          <td className="py-3 px-4 text-right font-medium text-gray-600">
-                            {d.amountVnd?.toLocaleString()} ₫
-                          </td>
-                          <td className="py-3 px-4 text-gray-700">
-                            {d.debtDueDate ? d.debtDueDate.split("T")[0] : "—"}
-                          </td>
-                          <td className="py-3 px-4">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                d.debtStatus === "paid"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : d.debtStatus === "partial"
-                                  ? "bg-blue-100 text-blue-800"
-                                  : "bg-amber-100 text-amber-800"
-                              }`}
-                            >
-                              {d.debtStatus}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4">
-                            {d.imageProofUrl ? (
-                              <a
-                                href={d.imageProofUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-teal-600 hover:underline font-semibold"
-                              >
-                                📎 View
-                              </a>
-                            ) : (
-                              <span className="text-gray-300">—</span>
-                            )}
-                          </td>
-                          <td className="py-3 px-4 text-right space-x-2">
-                            <button
-                              onClick={() => handleSettleDebt(d)}
-                              className="text-xs text-teal-600 hover:text-teal-800 font-semibold"
-                            >
-                              {d.debtStatus === "paid" ? "Mark Unpaid" : "Mark Paid"}
-                            </button>
-                            <button
-                              onClick={() => {
-                                setEditingTransaction(d);
-                                setIsModalOpen(true);
-                              }}
-                              className="text-gray-500 hover:text-gray-800 font-medium"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => handleDeleteTransaction(d.id)}
-                              className="text-rose-500 hover:text-rose-700 font-medium"
-                            >
-                              Delete
-                            </button>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {(!debtSummary || debtSummary.debts.length === 0) ? (
+                        <tr>
+                          <td colSpan={9} className="py-8 text-center text-gray-400">
+                            No debt records found. Click "+ Add / Import Transaction" to record one.
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 4: Transaction Ledger */}
-          {activeViewTab === "ledger" && (
-            <div className="space-y-4">
-              {/* Ledger Controls */}
-              <div className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-3">
-                  <input
-                    type="text"
-                    placeholder="Search notes, events, category..."
-                    value={txSearch}
-                    onChange={(e) => setTxSearch(e.target.value)}
-                    className="px-3 py-1.5 bg-gray-50 border border-gray-300 rounded-xl text-xs w-64 focus:ring-1 focus:ring-teal-500"
-                  />
-                  <select
-                    value={txTypeFilter}
-                    onChange={(e) => setTxTypeFilter(e.target.value)}
-                    className="px-3 py-1.5 bg-gray-50 border border-gray-300 rounded-xl text-xs text-gray-700 font-medium cursor-pointer"
-                  >
-                    <option value="all">All Types</option>
-                    <option value="cost">Cost (Expense)</option>
-                    <option value="revenue">Revenue</option>
-                    <option value="debt">Debt</option>
-                  </select>
-                  <select
-                    value={txCategoryFilter}
-                    onChange={(e) => setTxCategoryFilter(e.target.value)}
-                    className="px-3 py-1.5 bg-gray-50 border border-gray-300 rounded-xl text-xs text-gray-700 font-medium cursor-pointer"
-                  >
-                    <option value="all">All Categories</option>
-                    {report.categoriesList.map((cat) => (
-                      <option key={cat} value={cat}>
-                        {cat}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="text-xs text-gray-500">
-                  Showing <strong>{filteredTransactions.length}</strong> transactions
-                </div>
-              </div>
-
-              {/* Transactions Table */}
-              <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
-                <table className="w-full text-xs text-left">
-                  <thead className="bg-gray-50 text-gray-600 border-b border-gray-200">
-                    <tr>
-                      <th className="py-3 px-4">Date</th>
-                      <th className="py-3 px-4">Type</th>
-                      <th className="py-3 px-4">Category</th>
-                      <th className="py-3 px-4 text-right">Amount (USD)</th>
-                      <th className="py-3 px-4 text-right">Amount (VND)</th>
-                      <th className="py-3 px-4">Note / Event</th>
-                      <th className="py-3 px-4">Flags</th>
-                      <th className="py-3 px-4">Proof</th>
-                      <th className="py-3 px-4 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {filteredTransactions.length === 0 ? (
-                      <tr>
-                        <td colSpan={9} className="py-8 text-center text-gray-400">
-                          No transactions found matching the filter criteria.
-                        </td>
-                      </tr>
-                    ) : (
-                      filteredTransactions.map((tx) => (
-                        <tr key={tx.id} className="hover:bg-gray-50">
-                          <td className="py-3 px-4 font-medium text-gray-700">
-                            {tx.transactionDate?.split("T")[0]}
-                          </td>
-                          <td className="py-3 px-4">
-                            <span
-                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                tx.type === "cost"
-                                  ? "bg-rose-100 text-rose-800"
-                                  : tx.type === "revenue"
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-amber-100 text-amber-800"
-                              }`}
-                            >
-                              {tx.type}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 font-semibold text-gray-900">{tx.category}</td>
-                          <td className="py-3 px-4 text-right font-bold text-gray-900">
-                            ${tx.amountUsd?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                          </td>
-                          <td className="py-3 px-4 text-right font-medium text-gray-600">
-                            {tx.amountVnd?.toLocaleString()} ₫
-                          </td>
-                          <td className="py-3 px-4 text-gray-700 max-w-[200px] truncate">
-                            {tx.note || tx.event ? (
-                              <div className="space-y-0.5">
-                                {tx.note && <div className="truncate">{tx.note}</div>}
-                                {tx.event && (
-                                  <span className="text-[10px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded font-medium">
-                                    🏷️ {tx.event}
-                                  </span>
-                                )}
-                              </div>
-                            ) : (
-                              "—"
-                            )}
-                          </td>
-                          <td className="py-3 px-4">
-                            {tx.isExcludedFromReport ? (
-                              <span className="text-[10px] bg-gray-200 text-gray-700 px-2 py-0.5 rounded font-medium">
-                                Excluded from Report
-                              </span>
-                            ) : tx.isRecurring ? (
-                              <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-medium">
-                                🔄 {tx.repeatFrequency}
-                              </span>
-                            ) : (
-                              <span className="text-gray-300">—</span>
-                            )}
-                          </td>
-                          <td className="py-3 px-4">
-                            {tx.imageProofUrl ? (
-                              <a
-                                href={tx.imageProofUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="text-teal-600 hover:underline font-semibold"
+                      ) : (
+                        debtSummary.debts.map((d) => (
+                          <tr key={d.id} className="hover:bg-gray-50">
+                            <td className="py-2.5 px-4 font-medium text-gray-700">
+                              {d.transactionDate?.split("T")[0]}
+                            </td>
+                            <td className="py-2.5 px-4 font-semibold text-gray-900">
+                              {d.debtCounterparty || "—"}
+                            </td>
+                            <td className="py-2.5 px-4 text-gray-600">{d.category}</td>
+                            <td className="py-2.5 px-4 text-right font-semibold text-gray-900">
+                              ${d.amountUsd?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-medium text-gray-600">
+                              {d.amountVnd?.toLocaleString()} ₫
+                            </td>
+                            <td className="py-2.5 px-4 text-gray-700">
+                              {d.debtDueDate ? d.debtDueDate.split("T")[0] : "—"}
+                            </td>
+                            <td className="py-2.5 px-4">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                  d.debtStatus === "paid"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : d.debtStatus === "partial"
+                                    ? "bg-blue-100 text-blue-800"
+                                    : "bg-amber-100 text-amber-800"
+                                }`}
                               >
-                                📎 View
-                              </a>
-                            ) : (
-                              <span className="text-gray-300">—</span>
-                            )}
-                          </td>
-                          <td className="py-3 px-4 text-right space-x-2">
-                            <button
-                              onClick={() => {
-                                setEditingTransaction(tx);
-                                setIsModalOpen(true);
-                              }}
-                              className="text-xs text-gray-600 hover:text-gray-900 font-medium"
-                            >
-                              Edit
-                            </button>
-                            <button
-                              onClick={() => handleDeleteTransaction(tx.id)}
-                              className="text-xs text-rose-500 hover:text-rose-700 font-medium"
-                            >
-                              Delete
-                            </button>
+                                {d.debtStatus}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-4">
+                              {d.imageProofUrl ? (
+                                <a
+                                  href={d.imageProofUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-teal-600 hover:underline font-semibold"
+                                >
+                                  📎 View
+                                </a>
+                              ) : (
+                                <span className="text-gray-300">—</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-4 text-right space-x-2">
+                              <button
+                                onClick={() => handleSettleDebt(d)}
+                                className="text-xs text-teal-600 hover:text-teal-800 font-semibold"
+                              >
+                                {d.debtStatus === "paid" ? "Mark Unpaid" : "Mark Paid"}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setEditingTransaction(d);
+                                  setIsModalOpen(true);
+                                }}
+                                className="text-gray-500 hover:text-gray-800 font-medium"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleDeleteTransaction(d.id)}
+                                className="text-rose-500 hover:text-rose-700 font-medium"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* TAB CONTENT 3: Transaction Ledger */}
+            {activeTab === "ledger" && (
+              <div className="p-5 space-y-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <input
+                      type="text"
+                      placeholder="Search notes, events, category..."
+                      value={txSearch}
+                      onChange={(e) => setTxSearch(e.target.value)}
+                      className="px-3 py-1.5 bg-gray-50 border border-gray-300 rounded-xl text-xs w-64 focus:ring-1 focus:ring-teal-500"
+                    />
+                    <select
+                      value={txTypeFilter}
+                      onChange={(e) => setTxTypeFilter(e.target.value)}
+                      className="px-3 py-1.5 bg-gray-50 border border-gray-300 rounded-xl text-xs text-gray-700 font-medium cursor-pointer"
+                    >
+                      <option value="all">All Types</option>
+                      <option value="cost">Cost (Expense)</option>
+                      <option value="revenue">Revenue</option>
+                      <option value="debt">Debt</option>
+                    </select>
+                    <select
+                      value={txCategoryFilter}
+                      onChange={(e) => setTxCategoryFilter(e.target.value)}
+                      className="px-3 py-1.5 bg-gray-50 border border-gray-300 rounded-xl text-xs text-gray-700 font-medium cursor-pointer"
+                    >
+                      <option value="all">All Categories</option>
+                      {report.categoriesList.map((cat) => (
+                        <option key={cat} value={cat}>
+                          {cat}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    Showing <strong>{filteredTransactions.length}</strong> transactions
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-gray-50 text-gray-600 border-b border-gray-200">
+                      <tr>
+                        <th className="py-2.5 px-4">Date</th>
+                        <th className="py-2.5 px-4">Type</th>
+                        <th className="py-2.5 px-4">Category</th>
+                        <th className="py-2.5 px-4 text-right">Amount (USD)</th>
+                        <th className="py-2.5 px-4 text-right">Amount (VND)</th>
+                        <th className="py-2.5 px-4">Note / Event</th>
+                        <th className="py-2.5 px-4">Flags</th>
+                        <th className="py-2.5 px-4">Proof</th>
+                        <th className="py-2.5 px-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filteredTransactions.length === 0 ? (
+                        <tr>
+                          <td colSpan={9} className="py-8 text-center text-gray-400">
+                            No transactions found matching the filter criteria.
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
+                      ) : (
+                        filteredTransactions.map((tx) => (
+                          <tr key={tx.id} className="hover:bg-gray-50">
+                            <td className="py-2.5 px-4 font-medium text-gray-700">
+                              {tx.transactionDate?.split("T")[0]}
+                            </td>
+                            <td className="py-2.5 px-4">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                  tx.type === "cost"
+                                    ? "bg-rose-100 text-rose-800"
+                                    : tx.type === "revenue"
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-amber-100 text-amber-800"
+                                }`}
+                              >
+                                {tx.type}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-4 font-semibold text-gray-900">{tx.category}</td>
+                            <td className="py-2.5 px-4 text-right font-bold text-gray-900">
+                              ${tx.amountUsd?.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                            </td>
+                            <td className="py-2.5 px-4 text-right font-medium text-gray-600">
+                              {tx.amountVnd?.toLocaleString()} ₫
+                            </td>
+                            <td className="py-2.5 px-4 text-gray-700 max-w-[200px] truncate">
+                              {tx.note || tx.event ? (
+                                <div className="space-y-0.5">
+                                  {tx.note && <div className="truncate">{tx.note}</div>}
+                                  {tx.event && (
+                                    <span className="text-[10px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded font-medium">
+                                      🏷️ {tx.event}
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                "—"
+                              )}
+                            </td>
+                            <td className="py-2.5 px-4">
+                              {tx.isExcludedFromReport ? (
+                                <span className="text-[10px] bg-gray-200 text-gray-700 px-2 py-0.5 rounded font-medium">
+                                  Excluded from Report
+                                </span>
+                              ) : tx.isRecurring ? (
+                                <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-medium">
+                                  🔄 {tx.repeatFrequency}
+                                </span>
+                              ) : (
+                                <span className="text-gray-300">—</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-4">
+                              {tx.imageProofUrl ? (
+                                <a
+                                  href={tx.imageProofUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-teal-600 hover:underline font-semibold"
+                                >
+                                  📎 View
+                                </a>
+                              ) : (
+                                <span className="text-gray-300">—</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-4 text-right space-x-2">
+                              <button
+                                onClick={() => {
+                                  setEditingTransaction(tx);
+                                  setIsModalOpen(true);
+                                }}
+                                className="text-xs text-gray-600 hover:text-gray-900 font-medium"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleDeleteTransaction(tx.id)}
+                                className="text-xs text-rose-500 hover:text-rose-700 font-medium"
+                              >
+                                Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </>
       ) : null}
 

@@ -72,22 +72,22 @@ export async function exportPLToExcel(report: PLReportSummary) {
   // Row 4: Empty spacer
   worksheet.addRow([]);
 
-  // Row 5: Column Headers (Mth 1 .. Mth 12, Total)
+  // Row 5: Column Headers (Jan .. Dec, YTD)
   const headerRowValues = [
-    "",
-    "Mth 1",
-    "Mth 2",
-    "Mth 3",
-    "Mth 4",
-    "Mth 5",
-    "Mth 6",
-    "Mth 7",
-    "Mth 8",
-    "Mth 9",
-    "Mth 10",
-    "Mth 11",
-    "Mth 12",
-    `Total ${report.year}`
+    "Category / Metric",
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+    "YTD"
   ];
   const rHeader = worksheet.addRow(headerRowValues);
   rHeader.font = fontBold;
